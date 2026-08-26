@@ -26,8 +26,7 @@
 // mute toggle -- something you click to turn your input on or off -- which is
 // not what this is. person.wave.2 is a head-and-shoulders silhouette with speech
 // coming out of it, and its outline/fill pair carries idle vs. recording without
-// a second glyph. There is no .badge or .circle variant of it, so Arming borrows
-// the tint instead (see -setState:).
+// a second glyph.
 static NSString * symbol_for(yap::State s) {
     switch (s) {
         case yap::State::NeedsPermissions: return @"exclamationmark.triangle";
@@ -54,13 +53,16 @@ static NSString * symbol_for(yap::State s) {
     [img setTemplate:YES];   // setter, not dot-syntax: `template` is a C++ keyword
     _item.button.image = img;
     _item.button.toolTip = [NSString stringWithFormat:@"Yap — %s", yap::state_detail(s)];
-    // Recording is the one state worth making unmistakable at a glance. Arming is
-    // the same glyph dimmed -- the engine is spinning up and a press right now is
-    // not yet being heard, which a dimmed icon says without another symbol.
-    NSColor * tint = nil;
-    if (s == yap::State::Recording)   tint = [NSColor systemRedColor];
-    else if (s == yap::State::Arming) tint = [NSColor tertiaryLabelColor];
-    _item.button.contentTintColor = tint;
+    // Recording is the one state worth making unmistakable at a glance, and the
+    // only one that gets a tint.
+    //
+    // Arming deliberately gets NONE. Dimming it with tertiaryLabelColor looked
+    // washed out on a dark menu bar: the label colors are low-alpha white there,
+    // so a tinted template glyph turns muddy grey next to the crisp system
+    // indicators. Any alpha-based dim has that problem by construction, and the
+    // state lasts ~300 ms -- not worth a second visual just to say "wait".
+    _item.button.contentTintColor =
+        (s == yap::State::Recording) ? [NSColor systemRedColor] : nil;
     [self refreshMenu];
 }
 
