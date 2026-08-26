@@ -47,7 +47,10 @@ add_executable(yap
   src/app.mm
   src/statusitem.mm
   src/permissions.mm
+  src/hotkey.mm
+  src/audio.mm
   src/state.cpp
+  src/wav.cpp
 )
 target_include_directories(yap PRIVATE src)
 # ARC for the ObjC++ sources. CoreFoundation objects are outside ARC either way,
@@ -61,5 +64,12 @@ target_link_libraries(yap PRIVATE
   "-framework Carbon"               # IsSecureEventInputEnabled, kVK_* keycodes
   "-framework AVFoundation"         # AVAudioEngine, AVCaptureDevice
   "-framework CoreAudio"
+  "-framework AudioToolbox"       # AudioUnitSetProperty (input device pinning)
   "-framework ServiceManagement"    # SMAppService (launch at login)
 )
+
+# ---- tests ------------------------------------------------------------------
+enable_testing()
+add_executable(test-ringbuffer tests/test_ringbuffer.cpp)
+target_include_directories(test-ringbuffer PRIVATE src)
+add_test(NAME ringbuffer COMMAND test-ringbuffer)
