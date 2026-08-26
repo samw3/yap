@@ -47,7 +47,6 @@ public:
 private:
     std::vector<int32_t> tokenize(const std::string & s, bool parse_special) const;
     std::string generate(int max_new);
-    static bool looks_degenerate(const std::string & out, const std::string & in);
 
     ::llama_model *   model_ = nullptr;
     ::llama_context * ctx_   = nullptr;

@@ -299,8 +299,11 @@ static constexpr double kMaxHoldSeconds   = 120.0;
             });
         });
 
+    // Deliberately NOT calling armedIdleAndSchedule here: the job is still in
+    // flight. -finish: owns the transition back to Armed and starts the idle
+    // countdown, otherwise the countdown begins before the work completes and the
+    // menu-bar state briefly lies about what is happening.
     _utterance.clear();
-    [self armedIdleAndSchedule];
 }
 
 - (void)drainFinal {

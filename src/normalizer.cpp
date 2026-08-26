@@ -1,6 +1,7 @@
 #include "normalizer.h"
 #include "log.h"
 #include "utf8.h"
+#include "degenerate.h"
 #include "llama.h"
 
 #include <algorithm>
@@ -130,20 +131,6 @@ void Normalizer::warm_up() {
             ms_since(t0), prefix_toks_.size());
 }
 
-bool Normalizer::looks_degenerate(const std::string & out, const std::string & in) {
-    if (out.empty()) return true;
-    // Runaway generation: a normalizer should never balloon the text.
-    if (out.size() > in.size() * 3 + 64) return true;
-    // Immediate repetition loop: same 24-char window three times running.
-    if (out.size() > 96) {
-        const std::string w = out.substr(out.size() - 24);
-        size_t hits = 0, pos = 0;
-        while ((pos = out.find(w, pos)) != std::string::npos) { ++hits; pos += 1; }
-        if (hits >= 3) return true;
-    }
-    return false;
-}
-
 std::string Normalizer::generate(int max_new) {
     std::string out;
     std::string pending;   // holds incomplete UTF-8 sequences across tokens
@@ -224,9 +211,12 @@ std::string Normalizer::normalize(const std::string & transcript, const Style & 
     const size_t e = out.find_last_not_of(" \t\n\r");
     out = (b == std::string::npos) ? std::string() : out.substr(b, e - b + 1);
 
-    if (looks_degenerate(out, transcript)) {
-        YAP_WARN("s1-mini output looked degenerate (%zu chars from %zu) — using raw transcript",
+    if (yap::looks_degenerate(out, transcript)) {
+        YAP_WARN("s1-mini output rejected (%zu chars from %zu) — using raw transcript",
                  out.size(), transcript.size());
+        // %{private}s: this is the user's speech. Redacted in normal log output;
+        // revealable with a logging profile when actually debugging.
+        YAP_WARN("  rejected in=%{private}s out=%{private}s", transcript.c_str(), out.c_str());
         return transcript;
     }
 

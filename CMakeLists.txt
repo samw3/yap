@@ -82,3 +82,7 @@ add_test(NAME ringbuffer COMMAND test-ringbuffer)
 add_executable(test-utf8 tests/test_utf8.cpp)
 target_include_directories(test-utf8 PRIVATE src)
 add_test(NAME utf8 COMMAND test-utf8)
+
+add_executable(test-degenerate tests/test_degenerate.cpp)
+target_include_directories(test-degenerate PRIVATE src)
+add_test(NAME degenerate COMMAND test-degenerate)
