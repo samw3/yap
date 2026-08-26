@@ -40,3 +40,26 @@ message(STATUS "yap: single shared ggml target provided by ${_ggml_src}")
 # ---- smoke test: both engines in ONE process -------------------------------
 add_executable(yap-smoke src/smoke.cpp)
 target_link_libraries(yap-smoke PRIVATE llama parakeet)
+
+# ---- the app ---------------------------------------------------------------
+add_executable(yap
+  src/main.mm
+  src/app.mm
+  src/statusitem.mm
+  src/permissions.mm
+  src/state.cpp
+)
+target_include_directories(yap PRIVATE src)
+# ARC for the ObjC++ sources. CoreFoundation objects are outside ARC either way,
+# so CFRelease still has to be deliberate.
+target_compile_options(yap PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+target_link_libraries(yap PRIVATE
+  llama
+  parakeet
+  "-framework Cocoa"                # NSApplication, NSStatusItem, NSPasteboard
+  "-framework ApplicationServices"  # CGEventTap, AXUIElement
+  "-framework Carbon"               # IsSecureEventInputEnabled, kVK_* keycodes
+  "-framework AVFoundation"         # AVAudioEngine, AVCaptureDevice
+  "-framework CoreAudio"
+  "-framework ServiceManagement"    # SMAppService (launch at login)
+)
