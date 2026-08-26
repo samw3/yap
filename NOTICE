@@ -1,0 +1,28 @@
+yap — push-to-talk dictation for macOS
+
+This product includes the following third-party models and libraries.
+
+--------------------------------------------------------------------------------
+S1-mini by Superwhisper
+--------------------------------------------------------------------------------
+Text normalization model (a fine-tune of Qwen/Qwen3-0.6B).
+https://huggingface.co/superwhisper/s1-mini
+
+Licensed under the Apache License, Version 2.0, with an additional naming
+clause requiring that the model retain the name "S1-mini by Superwhisper"
+with exact capitalization wherever it is deployed. That name is reproduced
+here and in the application's About panel to satisfy that clause.
+
+--------------------------------------------------------------------------------
+Parakeet TDT 0.6B v3 (NVIDIA)
+--------------------------------------------------------------------------------
+Speech recognition model. ggml conversion published by ggml-org.
+https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+https://huggingface.co/ggml-org/parakeet-GGUF
+
+--------------------------------------------------------------------------------
+llama.cpp / whisper.cpp / ggml  (MIT)
+--------------------------------------------------------------------------------
+Copyright (c) 2023-2026 The ggml authors
+https://github.com/ggml-org/llama.cpp
+https://github.com/ggml-org/whisper.cpp

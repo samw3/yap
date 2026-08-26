@@ -1,0 +1,17 @@
+# Native deps: cloned at pinned SHAs by scripts/setup-deps.sh
+/third_party/
+
+# Models: ~1.1 GB, fetched by scripts/fetch-models.sh
+/models/*.gguf
+/models/*.bin
+
+# Build output
+/build/
+/build-*/
+
+# Benchmark fixtures (generated from whisper.cpp/samples by scripts)
+/bench/*.wav
+
+.DS_Store
+*.dSYM/
+compile_commands.json
