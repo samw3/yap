@@ -7,6 +7,8 @@
 #include "state.h"
 #include "hotkey.h"
 #include "wav.h"
+#include "pipeline.h"
+#include "inject.h"
 
 #include <memory>
 #include <vector>
@@ -20,9 +22,11 @@ static constexpr double kMinHoldSeconds   = 0.20;   // shorter presses are accid
 static constexpr double kMaxHoldSeconds   = 120.0;
 
 @implementation YapAppDelegate {
-    YapStatusItem *              _status;
-    YapAudio *                   _audio;
-    std::unique_ptr<yap::Hotkey> _hotkey;
+    YapStatusItem *                _status;
+    YapAudio *                     _audio;
+    std::unique_ptr<yap::Hotkey>   _hotkey;
+    std::unique_ptr<yap::Pipeline> _pipe;
+    yap::Style                     _style;
 
     NSTimer * _permPoll;
     NSTimer * _idleTimer;
@@ -60,8 +64,27 @@ static constexpr double kMaxHoldSeconds   = 120.0;
 
     [self reevaluate];
 
+    [self startPipeline];
+
     _permPoll = [NSTimer scheduledTimerWithTimeInterval:1.5 repeats:YES
                                                   block:^(NSTimer * t) { [self reevaluate]; }];
+}
+
+- (void)startPipeline {
+    NSBundle * b = [NSBundle mainBundle];
+    NSString * asr = [b pathForResource:@"ggml-parakeet-tdt-0.6b-v3-q8_0" ofType:@"bin"];
+    NSString * llm = [b pathForResource:@"s1-mini-q4_k_m" ofType:@"gguf"];
+    if (!asr || !llm) {
+        YAP_FAULT("models missing from bundle Resources (asr=%{public}s llm=%{public}s)",
+                  asr ? "ok" : "MISSING", llm ? "ok" : "MISSING");
+        return;
+    }
+    _pipe = std::make_unique<yap::Pipeline>();
+    // Loads and warms on the worker thread; app launch is not blocked. Doing the
+    // warm-up now converts a 1-3 s first-request stall into zero.
+    _pipe->start(asr.UTF8String, llm.UTF8String, [](bool ok) {
+        YAP_LOG("pipeline start -> %{public}s", ok ? "ready" : "FAILED");
+    });
 }
 
 #pragma mark - permissions / lifecycle
@@ -208,14 +231,30 @@ static constexpr double kMaxHoldSeconds   = 120.0;
         return;
     }
 
-    // Phase 2 deliverable: dump to disk so capture can be verified independently
-    // of the ASR and LLM stages.
-    NSString * dir = [NSString stringWithFormat:@"%@/Library/Logs", NSHomeDirectory()];
-    NSString * path = [NSString stringWithFormat:@"%@/yap-last-capture.wav", dir];
-    if (yap::write_wav_16k_mono(path.UTF8String, pcm16k))
-        YAP_LOG("wrote %{public}s", path.UTF8String);
-    else
-        YAP_WARN("failed writing %{public}s", path.UTF8String);
+    if (!_pipe || !_pipe->ready()) {
+        YAP_WARN("pipeline not ready — dropping utterance");
+        [self armedIdleAndSchedule];
+        return;
+    }
+
+    __weak YapAppDelegate * weakSelf = self;
+    _pipe->submit(std::move(pcm16k), _style,
+        // on_stage: worker thread -> main
+        [weakSelf](const char * stage) {
+            NSString * st = @(stage);
+            dispatch_async(dispatch_get_main_queue(), ^{
+                YapAppDelegate * s = weakSelf; if (!s) return;
+                [s setState:[st isEqualToString:@"transcribing"]
+                            ? yap::State::Transcribing : yap::State::Normalizing];
+            });
+        },
+        // on_done: worker thread -> main
+        [weakSelf](yap::Result r) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                YapAppDelegate * s = weakSelf; if (!s) return;
+                [s finish:r];
+            });
+        });
 
     _utterance.clear();
     [self armedIdleAndSchedule];
@@ -227,6 +266,33 @@ static constexpr double kMaxHoldSeconds   = 120.0;
         BOOL skipped = NO;
         [_audio copyRangeFrom:_cursor to:now into:&_utterance skipped:&skipped];
         _cursor = now;
+    }
+}
+
+- (void)finish:(const yap::Result &)r {
+    if (!r.ok || r.text.empty()) {
+        YAP_LOG("nothing to insert");
+        [self armedIdleAndSchedule];
+        return;
+    }
+
+    [self setState:yap::State::Injecting];
+    const yap::InjectResult ir = yap::inject_text(r.text);
+
+    switch (ir) {
+        case yap::InjectResult::Ok:
+            YAP_LOG("inserted %zu chars%{public}s", r.text.size(),
+                    r.normalized ? "" : " (raw transcript — normalizer declined)");
+            [self armedIdleAndSchedule];
+            break;
+        case yap::InjectResult::BlockedSecureInput:
+            [self setState:yap::State::SecureInput];
+            [self scheduleIdleTimer];
+            break;
+        case yap::InjectResult::Failed:
+            YAP_WARN("injection failed");
+            [self armedIdleAndSchedule];
+            break;
     }
 }
 
@@ -257,6 +323,7 @@ static constexpr double kMaxHoldSeconds   = 120.0;
     [_idleTimer invalidate];
     [_drainTimer invalidate];
     if (_hotkey) _hotkey->stop();
+    if (_pipe) _pipe->stop();
     [_audio disarm];
     YAP_LOG("yap terminating");
 }

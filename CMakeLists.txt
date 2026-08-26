@@ -49,8 +49,12 @@ add_executable(yap
   src/permissions.mm
   src/hotkey.mm
   src/audio.mm
+  src/inject.mm
   src/state.cpp
   src/wav.cpp
+  src/asr.cpp
+  src/normalizer.cpp
+  src/pipeline.cpp
 )
 target_include_directories(yap PRIVATE src)
 # ARC for the ObjC++ sources. CoreFoundation objects are outside ARC either way,
@@ -73,3 +77,7 @@ enable_testing()
 add_executable(test-ringbuffer tests/test_ringbuffer.cpp)
 target_include_directories(test-ringbuffer PRIVATE src)
 add_test(NAME ringbuffer COMMAND test-ringbuffer)
+
+add_executable(test-utf8 tests/test_utf8.cpp)
+target_include_directories(test-utf8 PRIVATE src)
+add_test(NAME utf8 COMMAND test-utf8)
