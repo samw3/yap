@@ -84,11 +84,19 @@ if [ "$NOTARIZE" = 1 ]; then
   xcrun notarytool history --keychain-profile "$PROFILE" >/dev/null 2>&1 || die \
 "no usable notarytool credentials for keychain profile '$PROFILE'.
 
-   Create one once (needs an app-specific password from appleid.apple.com):
-     xcrun notarytool store-credentials '$PROFILE' \\
-       --apple-id <your-apple-id> --team-id $TEAM_ID --password <app-specific-password>
+   Create one once, in your own terminal. Omit --password: notarytool then gives
+   you a secure prompt, so the secret stays out of shell history and out of argv,
+   which any process on the machine can read via ps.
 
-   Or pass --skip-notarize to build an unnotarized DMG for local testing."
+     xcrun notarytool store-credentials '$PROFILE' \\
+       --apple-id <your-apple-id> --team-id $TEAM_ID
+
+   Needs an app-specific password from appleid.apple.com (Sign-In and Security ->
+   App-Specific Passwords), or use an App Store Connect API key instead:
+   --key <path.p8> --key-id <id> --issuer <uuid>.
+
+   Nothing after this reads the secret: the build only ever passes the profile
+   NAME to notarytool. Or pass --skip-notarize to build an unnotarized DMG."
 fi
 
 VER="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$ROOT/bundle/Info.plist")"

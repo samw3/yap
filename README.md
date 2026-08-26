@@ -62,8 +62,20 @@ Override the identity with `YAP_SIGN_IDENTITY`, and the install path with `YAP_A
 ./scripts/make-dmg.sh --skip-notarize  # local testing, will warn downloaders
 ```
 
-Notarization needs a one-time keychain profile; the script prints the exact
-`xcrun notarytool store-credentials` command if it is missing. Pass `--staple-app`
+Notarization needs a one-time keychain profile. Create it in your own terminal and
+leave `--password` off, so notarytool gives you a secure prompt instead of putting
+the secret in shell history and in `argv`, which any process can read via `ps`:
+
+```sh
+xcrun notarytool store-credentials yap-notary \
+  --apple-id <your-apple-id> --team-id 266VNLKVKQ
+```
+
+That needs an app-specific password from appleid.apple.com, or an App Store Connect
+API key (`--key <path.p8> --key-id <id> --issuer <uuid>`), which is the better
+choice for CI since it is revocable independently of your Apple ID. Afterwards the
+secret lives only in the login keychain and the build passes notarytool the profile
+*name* — nothing in this repo ever reads it. Pass `--staple-app`
 to notarize the `.app` as well as the DMG, which costs a second ~1 GB upload but
 lets the app launch offline on a Mac that has never seen it.
 
