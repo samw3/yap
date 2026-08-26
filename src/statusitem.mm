@@ -53,16 +53,14 @@ static NSString * symbol_for(yap::State s) {
     [img setTemplate:YES];   // setter, not dot-syntax: `template` is a C++ keyword
     _item.button.image = img;
     _item.button.toolTip = [NSString stringWithFormat:@"Yap — %s", yap::state_detail(s)];
-    // Recording is the one state worth making unmistakable at a glance, and the
-    // only one that gets a tint.
-    //
-    // Arming deliberately gets NONE. Dimming it with tertiaryLabelColor looked
-    // washed out on a dark menu bar: the label colors are low-alpha white there,
-    // so a tinted template glyph turns muddy grey next to the crisp system
-    // indicators. Any alpha-based dim has that problem by construction, and the
-    // state lasts ~300 ms -- not worth a second visual just to say "wait".
-    _item.button.contentTintColor =
-        (s == yap::State::Recording) ? [NSColor systemRedColor] : nil;
+    // No tint, ever. Template rendering already matches the menu bar in both
+    // appearances, and every color tried fought it: tertiaryLabelColor for Arming
+    // came out muddy grey on dark, and systemRedColor for Recording came out
+    // near-black, because these colors resolve against the APP's appearance and an
+    // LSUIElement app does not follow the menu bar's. Outline vs. fill carries
+    // recording on its own, and macOS puts its own amber mic indicator up next to
+    // us whenever the input is live.
+    _item.button.contentTintColor = nil;
     [self refreshMenu];
 }
 
