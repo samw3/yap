@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Required once the hardened runtime is on. Without it the runtime revokes
+       microphone access and the tap delivers digital silence: no error, no
+       exception, nothing in the log. -->
+  <key>com.apple.security.device.audio-input</key>  <true/>
+
+  <!-- App Sandbox is deliberately absent and must stay absent. CGEventTapCreate
+       and the AXUIElement APIs this app is built on are both unavailable to a
+       sandboxed process, so enabling it would leave the app unable to see the
+       hotkey or insert text. That rules out the Mac App Store; Developer ID
+       distribution is the only channel available to a tool of this shape. -->
+</dict>
+</plist>

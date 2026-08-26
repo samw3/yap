@@ -55,6 +55,27 @@ Accessibility grants on **every rebuild**.
 
 Override the identity with `YAP_SIGN_IDENTITY`, and the install path with `YAP_APP_PATH`.
 
+### Build a DMG to distribute
+
+```sh
+./scripts/make-dmg.sh                  # -> dist/Yap-<version>.dmg
+./scripts/make-dmg.sh --skip-notarize  # local testing, will warn downloaders
+```
+
+Notarization needs a one-time keychain profile; the script prints the exact
+`xcrun notarytool store-credentials` command if it is missing. Pass `--staple-app`
+to notarize the `.app` as well as the DMG, which costs a second ~1 GB upload but
+lets the app launch offline on a Mac that has never seen it.
+
+Unlike `dev-run.sh`, this signs with the **hardened runtime**, which notarization
+requires and which silently revokes microphone access unless the bundle carries
+`com.apple.security.device.audio-input` (see `bundle/yap.entitlements`). The script
+verifies both after signing, because a mic that returns digital silence looks
+exactly like a mic that works.
+
+The DMG is ~1.1 GB: the models are bundled into `Contents/Resources`, so there is
+nothing to download on first launch.
+
 ## Permissions
 
 Two grants, both one-time:
