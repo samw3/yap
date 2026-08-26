@@ -26,9 +26,13 @@ bool Asr::load(const std::string & model_path, int n_threads) {
         YAP_WARN("parakeet load failed: %{public}s", model_path.c_str());
         return false;
     }
-    // parakeet_chunk() needs an explicit state; allocate once and reuse. The
-    // header notes chunk() is more efficient than full() for short clips, which
-    // is our common case, and n_audio_ctx (5000) covers our whole 120 s range.
+    // One state, allocated once and reused. Every call must go through
+    // parakeet_full_with_state(), NEVER parakeet_chunk(): chunk() is the
+    // streaming entry point and only ever APPENDS to state->result_all, so
+    // consecutive dictations concatenate (press 2 types press 1's text first).
+    // *_full_with_state() clears result_all, and takes the dynamic-encoder path
+    // when the audio exceeds n_audio_ctx instead of silently truncating to it --
+    // 5000 mel frames at a 160-sample hop is 50 s, not the 120 s we allow.
     state_ = parakeet_init_state(ctx_);
     if (!state_) {
         YAP_WARN("parakeet_init_state failed");
@@ -47,7 +51,7 @@ void Asr::warm_up() {
     auto pp = parakeet_full_default_params(PARAKEET_SAMPLING_GREEDY);
     pp.n_threads  = n_threads_;
     pp.no_context = true;
-    parakeet_chunk(ctx_, state_, pp, silence.data(), (int) silence.size());
+    parakeet_full_with_state(ctx_, state_, pp, silence.data(), (int) silence.size());
     YAP_LOG("parakeet warm-up %.0f ms", ms_since(t0));
 }
 
@@ -61,8 +65,8 @@ std::string Asr::transcribe(const std::vector<float> & pcm) {
     pp.no_context = true;
 
     const auto t0 = std::chrono::steady_clock::now();
-    if (parakeet_chunk(ctx_, state_, pp, pcm.data(), (int) pcm.size()) != 0) {
-        YAP_WARN("parakeet_chunk failed");
+    if (parakeet_full_with_state(ctx_, state_, pp, pcm.data(), (int) pcm.size()) != 0) {
+        YAP_WARN("parakeet transcription failed");
         return {};
     }
     last_ms_ = ms_since(t0);
