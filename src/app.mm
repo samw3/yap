@@ -223,12 +223,11 @@ static constexpr double kMaxHoldSeconds   = 120.0;
              (unsigned long long) _startFrame, (unsigned long long) preroll, rate);
 }
 
-// The frame timeline restarts at zero with every new engine, so a rebuild in the
-// middle of a hold strands _cursor in a timeline that no longer exists: `now <=
-// _cursor` then holds for the rest of the press and the hold yields zero frames
-// with nothing logged. Re-anchor to the new engine instead, and keep whatever was
+// The frame timeline restarts at zero with every new engine, so a rebuild during a
+// hold strands _cursor in a timeline that no longer exists and `now <= _cursor`
+// holds for the rest of the press. Re-anchor to the new engine, keeping what was
 // already captured unless the hardware rate moved -- splicing 44.1 kHz onto
-// 48 kHz would just come out wrong.
+// 48 kHz comes out wrong.
 - (void)reanchorIfEngineRebuilt {
     const uint64_t gen = [_audio generation];
     if (gen == _armGen) return;

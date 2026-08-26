@@ -26,13 +26,14 @@ bool Asr::load(const std::string & model_path, int n_threads) {
         YAP_WARN("parakeet load failed: %{public}s", model_path.c_str());
         return false;
     }
-    // One state, allocated once and reused. Every call must go through
-    // parakeet_full_with_state(), NEVER parakeet_chunk(): chunk() is the
-    // streaming entry point and only ever APPENDS to state->result_all, so
-    // consecutive dictations concatenate (press 2 types press 1's text first).
-    // *_full_with_state() clears result_all, and takes the dynamic-encoder path
-    // when the audio exceeds n_audio_ctx instead of silently truncating to it --
-    // 5000 mel frames at a 160-sample hop is 50 s, not the 120 s we allow.
+    // One state, allocated once and reused. Transcription must go through
+    // parakeet_full_with_state(), never parakeet_chunk(): chunk() is the streaming
+    // entry point and only appends to state->result_all, so reusing a state across
+    // utterances concatenates them. Only *_full_with_state() clears it.
+    //
+    // It also takes the dynamic-encoder path for audio longer than n_audio_ctx,
+    // where chunk() truncates to it -- and n_audio_ctx is 5000 mel frames, which
+    // at a 160-sample hop is 50 s, well inside the 120 s hold we allow.
     state_ = parakeet_init_state(ctx_);
     if (!state_) {
         YAP_WARN("parakeet_init_state failed");

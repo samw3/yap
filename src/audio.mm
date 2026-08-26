@@ -60,8 +60,8 @@ struct TapCtx {
                                              sizeof(zero), &zero);
     if (st != noErr) YAP_INFO("could not clear HogModeIsAllowed (%d) — harmless", (int) st);
 
-    // The configuration-change observer is deliberately NOT registered here: it is
-    // scoped to the live engine in -arm. See -observeConfigurationChangesFor:.
+    // The configuration-change observer is scoped to the live engine, so it is
+    // registered in -arm rather than here. See -observeConfigurationChangesFor:.
     _pinnedDevice = kAudioObjectUnknown;
     return self;
 }
@@ -71,11 +71,9 @@ struct TapCtx {
 }
 
 - (void)observeConfigurationChangesFor:(AVAudioEngine *)engine {
-    // Scope the observation to THIS engine instance. object:nil also delivered
-    // whatever a torn-down engine posts while it finishes stopping, and acting on
-    // one of those would rebuild the *live* engine for no reason. Defensive rather
-    // than the observed cause -- the flapping traced to a live-engine
-    // notification, which -configurationDidChange is what stops.
+    // Scoped to THIS engine: a torn-down engine keeps posting configuration
+    // changes while it finishes stopping, and object:nil would let those rebuild
+    // whatever replaced it.
     if (_cfgObserver) [[NSNotificationCenter defaultCenter] removeObserver:_cfgObserver];
     __weak YapAudio * weakSelf = self;
     _cfgObserver = [[NSNotificationCenter defaultCenter]
@@ -91,10 +89,10 @@ struct TapCtx {
 }
 
 // A configuration-change notification is not proof that OUR configuration
-// changed. Require an actual difference before paying for a rebuild -- but treat
-// an engine that is no longer running as always worth rebuilding, since a live
-// `_armed` over a stopped engine is the silent-silence failure this code exists
-// to avoid.
+// changed: the aggregate device behind the input node churns on its own. Require a
+// real difference before paying for a rebuild -- except for an engine that has
+// stopped, which must always be rebuilt, because `_armed` over a stopped engine is
+// silence that reports itself as working.
 - (BOOL)configurationDidChange {
     if (!_engine) return YES;
 
@@ -290,10 +288,9 @@ struct TapCtx {
     AudioUnit au = input.audioUnit;
     if (!au) return;
 
-    // Only write if it differs. Setting kAudioOutputUnitProperty_CurrentDevice is
+    // Only write if it differs: setting kAudioOutputUnitProperty_CurrentDevice is
     // itself a configuration change, and the AUHAL already starts on the default
-    // input device -- so the redundant write bought us nothing and posted a
-    // notification that used to send us straight into a rebuild.
+    // input device, so a redundant write just provokes a rebuild.
     AudioDeviceID cur = kAudioObjectUnknown;
     UInt32 cursz = sizeof(cur);
     if (AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice,
@@ -309,8 +306,8 @@ struct TapCtx {
 }
 
 - (void)teardownEngine {
-    // Before anything else: a dying engine still posts configuration changes, and
-    // acting on those is what caused the arm/teardown flapping.
+    // Observer first: a dying engine keeps posting configuration changes, and
+    // acting on one would rebuild whatever replaced it.
     if (_cfgObserver) {
         [[NSNotificationCenter defaultCenter] removeObserver:_cfgObserver];
         _cfgObserver = nil;

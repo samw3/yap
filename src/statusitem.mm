@@ -22,11 +22,9 @@
 // SF Symbols as template images: no asset catalog, and they adapt to light/dark
 // and to menu-bar tinting automatically.
 //
-// A person speaking, not a microphone: a mic glyph in a menu bar reads as a
-// mute toggle -- something you click to turn your input on or off -- which is
-// not what this is. person.wave.2 is a head-and-shoulders silhouette with speech
-// coming out of it, and its outline/fill pair carries idle vs. recording without
-// a second glyph.
+// A person speaking, not a microphone: a mic glyph in a menu bar reads as a mute
+// toggle. person.wave.2 is a head-and-shoulders silhouette with speech coming out
+// of it, and its outline/fill pair carries idle vs. recording on one glyph.
 static NSString * symbol_for(yap::State s) {
     switch (s) {
         case yap::State::NeedsPermissions: return @"exclamationmark.triangle";
@@ -53,13 +51,11 @@ static NSString * symbol_for(yap::State s) {
     [img setTemplate:YES];   // setter, not dot-syntax: `template` is a C++ keyword
     _item.button.image = img;
     _item.button.toolTip = [NSString stringWithFormat:@"Yap — %s", yap::state_detail(s)];
-    // No tint, ever. Template rendering already matches the menu bar in both
-    // appearances, and every color tried fought it: tertiaryLabelColor for Arming
-    // came out muddy grey on dark, and systemRedColor for Recording came out
-    // near-black, because these colors resolve against the APP's appearance and an
-    // LSUIElement app does not follow the menu bar's. Outline vs. fill carries
-    // recording on its own, and macOS puts its own amber mic indicator up next to
-    // us whenever the input is live.
+    // No tint in any state. NSColor's dynamic colors resolve against the app's
+    // appearance, and an LSUIElement app does not follow the menu bar's, so a tint
+    // fights whichever bar it lands on. Template rendering matches it for free,
+    // outline vs. fill already distinguishes recording, and macOS raises its own
+    // amber mic indicator beside us whenever the input is live.
     _item.button.contentTintColor = nil;
     [self refreshMenu];
 }
