@@ -21,20 +21,27 @@
 
 // SF Symbols as template images: no asset catalog, and they adapt to light/dark
 // and to menu-bar tinting automatically.
+//
+// A person speaking, not a microphone: a mic glyph in a menu bar reads as a
+// mute toggle -- something you click to turn your input on or off -- which is
+// not what this is. person.wave.2 is a head-and-shoulders silhouette with speech
+// coming out of it, and its outline/fill pair carries idle vs. recording without
+// a second glyph. There is no .badge or .circle variant of it, so Arming borrows
+// the tint instead (see -setState:).
 static NSString * symbol_for(yap::State s) {
     switch (s) {
         case yap::State::NeedsPermissions: return @"exclamationmark.triangle";
-        case yap::State::Idle:             return @"mic";
-        case yap::State::Arming:           return @"mic.badge.plus";
-        case yap::State::Armed:            return @"mic";
-        case yap::State::Recording:        return @"mic.fill";
+        case yap::State::Idle:             return @"person.wave.2";
+        case yap::State::Arming:           return @"person.wave.2";
+        case yap::State::Armed:            return @"person.wave.2";
+        case yap::State::Recording:        return @"person.wave.2.fill";
         case yap::State::Transcribing:     return @"waveform";
         case yap::State::Normalizing:      return @"wand.and.stars";
         case yap::State::Injecting:        return @"text.cursor";
         case yap::State::SecureInput:      return @"lock.fill";
         case yap::State::TapDead:          return @"exclamationmark.triangle.fill";
     }
-    return @"mic";
+    return @"person.wave.2";
 }
 
 - (void)setState:(yap::State)s {
@@ -42,13 +49,18 @@ static NSString * symbol_for(yap::State s) {
     NSString * name = symbol_for(s);
     NSImage * img = [NSImage imageWithSystemSymbolName:name
                              accessibilityDescription:@(yap::state_detail(s))];
-    if (!img) img = [NSImage imageWithSystemSymbolName:@"mic" accessibilityDescription:@"Yap"];
+    if (!img) img = [NSImage imageWithSystemSymbolName:@"person.wave.2"
+                             accessibilityDescription:@"Yap"];
     [img setTemplate:YES];   // setter, not dot-syntax: `template` is a C++ keyword
     _item.button.image = img;
     _item.button.toolTip = [NSString stringWithFormat:@"Yap — %s", yap::state_detail(s)];
-    // Recording is the one state worth making unmistakable at a glance.
-    _item.button.contentTintColor =
-        (s == yap::State::Recording) ? [NSColor systemRedColor] : nil;
+    // Recording is the one state worth making unmistakable at a glance. Arming is
+    // the same glyph dimmed -- the engine is spinning up and a press right now is
+    // not yet being heard, which a dimmed icon says without another symbol.
+    NSColor * tint = nil;
+    if (s == yap::State::Recording)   tint = [NSColor systemRedColor];
+    else if (s == yap::State::Arming) tint = [NSColor tertiaryLabelColor];
+    _item.button.contentTintColor = tint;
     [self refreshMenu];
 }
 
