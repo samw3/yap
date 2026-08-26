@@ -50,6 +50,7 @@ add_executable(yap
   src/hotkey.mm
   src/audio.mm
   src/inject.mm
+  src/settings.mm
   src/state.cpp
   src/wav.cpp
   src/asr.cpp

@@ -9,6 +9,7 @@
 #include "wav.h"
 #include "pipeline.h"
 #include "inject.h"
+#include "settings.h"
 
 #include <memory>
 #include <vector>
@@ -26,7 +27,6 @@ static constexpr double kMaxHoldSeconds   = 120.0;
     YapAudio *                     _audio;
     std::unique_ptr<yap::Hotkey>   _hotkey;
     std::unique_ptr<yap::Pipeline> _pipe;
-    yap::Style                     _style;
 
     NSTimer * _permPoll;
     NSTimer * _idleTimer;
@@ -65,6 +65,7 @@ static constexpr double kMaxHoldSeconds   = 120.0;
     [self reevaluate];
 
     [self startPipeline];
+    [self observeSystemEvents];
 
     _permPoll = [NSTimer scheduledTimerWithTimeInterval:1.5 repeats:YES
                                                   block:^(NSTimer * t) { [self reevaluate]; }];
@@ -85,6 +86,48 @@ static constexpr double kMaxHoldSeconds   = 120.0;
     _pipe->start(asr.UTF8String, llm.UTF8String, [](bool ok) {
         YAP_LOG("pipeline start -> %{public}s", ok ? "ready" : "FAILED");
     });
+}
+
+#pragma mark - system events
+
+- (void)observeSystemEvents {
+    NSNotificationCenter * wc = [[NSWorkspace sharedWorkspace] notificationCenter];
+    __weak YapAppDelegate * weakSelf = self;
+
+    // Event taps and audio engines both die across sleep/wake and fast user
+    // switching, often with no callback at all -- so tear down deliberately on
+    // the way out and rebuild on the way back in.
+    void (^teardown)(NSNotification *) = ^(NSNotification * n) {
+        YapAppDelegate * s = weakSelf; if (!s) return;
+        YAP_LOG("system event %{public}s — releasing audio and tap", n.name.UTF8String);
+        [s abortRecording];
+        [s->_audio disarm];
+        if (s->_hotkey) { s->_hotkey->stop(); s->_hotkey.reset(); }
+        [s setState:yap::State::Idle];
+    };
+    void (^rebuild)(NSNotification *) = ^(NSNotification * n) {
+        YapAppDelegate * s = weakSelf; if (!s) return;
+        YAP_LOG("system event %{public}s — rebuilding tap", n.name.UTF8String);
+        [s reevaluate];   // reinstalls the hotkey; audio re-arms lazily on next press
+    };
+
+    for (NSString * name in @[NSWorkspaceWillSleepNotification,
+                              NSWorkspaceSessionDidResignActiveNotification,
+                              NSWorkspaceScreensDidSleepNotification]) {
+        [wc addObserverForName:name object:nil queue:nil usingBlock:teardown];
+    }
+    for (NSString * name in @[NSWorkspaceDidWakeNotification,
+                              NSWorkspaceSessionDidBecomeActiveNotification]) {
+        [wc addObserverForName:name object:nil queue:nil usingBlock:rebuild];
+    }
+}
+
+- (void)abortRecording {
+    if (!_recording) return;
+    YAP_LOG("aborting in-flight recording");
+    _recording = NO;
+    [_drainTimer invalidate]; _drainTimer = nil;
+    _utterance.clear();
 }
 
 #pragma mark - permissions / lifecycle
@@ -238,7 +281,7 @@ static constexpr double kMaxHoldSeconds   = 120.0;
     }
 
     __weak YapAppDelegate * weakSelf = self;
-    _pipe->submit(std::move(pcm16k), _style,
+    _pipe->submit(std::move(pcm16k), yap::settings::style(),
         // on_stage: worker thread -> main
         [weakSelf](const char * stage) {
             NSString * st = @(stage);
@@ -305,12 +348,13 @@ static constexpr double kMaxHoldSeconds   = 120.0;
 
 - (void)scheduleIdleTimer {
     [self cancelIdleTimer];
-    if (kIdleTimeout <= 0) return;
-    _idleTimer = [NSTimer scheduledTimerWithTimeInterval:kIdleTimeout repeats:NO
+    const double timeout = yap::settings::idle_timeout();
+    if (timeout <= 0) return;   // 0 == never tear down
+    _idleTimer = [NSTimer scheduledTimerWithTimeInterval:timeout repeats:NO
                                                    block:^(NSTimer * t) {
         if (self->_recording) return;
         YAP_LOG("idle %.0f s — tearing down audio (indicator and sleep assertion clear)",
-                kIdleTimeout);
+                yap::settings::idle_timeout());
         [self->_audio disarm];
         [self setState:yap::State::Idle];
     }];

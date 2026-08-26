@@ -1,6 +1,7 @@
 #import "statusitem.h"
 
 #include "permissions.h"
+#include "settings.h"
 #include "log.h"
 
 @implementation YapStatusItem {
@@ -87,6 +88,58 @@ static NSString * symbol_for(yap::State s) {
     }
 
     [m addItem:[NSMenuItem separatorItem]];
+
+    // --- style: real model inputs (the control line), not cosmetics ---
+    const yap::Style st = yap::settings::style();
+
+    NSMenuItem * styleRoot = [[NSMenuItem alloc] initWithTitle:@"Style" action:nil keyEquivalent:@""];
+    NSMenu * styleMenu = [[NSMenu alloc] init];
+    struct { const char * label; int tag; } stylings[] = {
+        {"Casual", 0}, {"Semi-casual", 1}, {"Semi-formal", 2}, {"Formal", 3}
+    };
+    for (auto & o : stylings) {
+        NSMenuItem * it = [[NSMenuItem alloc] initWithTitle:@(o.label)
+                                                     action:@selector(pickStyling:) keyEquivalent:@""];
+        it.target = self; it.tag = o.tag;
+        it.state = ((int) st.styling == o.tag) ? NSControlStateValueOn : NSControlStateValueOff;
+        [styleMenu addItem:it];
+    }
+    styleRoot.submenu = styleMenu;
+    [m addItem:styleRoot];
+
+    NSMenuItem * structRoot = [[NSMenuItem alloc] initWithTitle:@"Structure" action:nil keyEquivalent:@""];
+    NSMenu * structMenu = [[NSMenu alloc] init];
+    struct { const char * label; int tag; } structs[] = {{"Prose", 0}, {"Lists", 1}};
+    for (auto & o : structs) {
+        NSMenuItem * it = [[NSMenuItem alloc] initWithTitle:@(o.label)
+                                                     action:@selector(pickStructure:) keyEquivalent:@""];
+        it.target = self; it.tag = o.tag;
+        it.state = ((int) st.structure == o.tag) ? NSControlStateValueOn : NSControlStateValueOff;
+        [structMenu addItem:it];
+    }
+    structRoot.submenu = structMenu;
+    [m addItem:structRoot];
+
+    NSMenuItem * ctxRoot = [[NSMenuItem alloc] initWithTitle:@"Context" action:nil keyEquivalent:@""];
+    NSMenu * ctxMenu = [[NSMenu alloc] init];
+    struct { const char * label; int tag; } ctxs[] = {{"General", 0}, {"Email", 1}};
+    for (auto & o : ctxs) {
+        NSMenuItem * it = [[NSMenuItem alloc] initWithTitle:@(o.label)
+                                                     action:@selector(pickContext:) keyEquivalent:@""];
+        it.target = self; it.tag = o.tag;
+        it.state = ((int) st.context == o.tag) ? NSControlStateValueOn : NSControlStateValueOff;
+        [ctxMenu addItem:it];
+    }
+    ctxRoot.submenu = ctxMenu;
+    [m addItem:ctxRoot];
+
+    NSMenuItem * login = [[NSMenuItem alloc] initWithTitle:@"Launch at Login"
+                                                    action:@selector(toggleLogin:) keyEquivalent:@""];
+    login.target = self;
+    login.state = yap::settings::launch_at_login() ? NSControlStateValueOn : NSControlStateValueOff;
+    [m addItem:login];
+
+    [m addItem:[NSMenuItem separatorItem]];
     NSMenuItem * about = [[NSMenuItem alloc] initWithTitle:@"About Yap"
                                                     action:@selector(showAbout:) keyEquivalent:@""];
     about.target = self;
@@ -107,6 +160,23 @@ static NSString * symbol_for(yap::State s) {
 }
 
 - (void)fixAX:(id)sender { yap::permissions_open_accessibility_pane(); }
+
+- (void)pickStyling:(NSMenuItem *)it {
+    yap::settings::set_styling((yap::Style::Styling) it.tag);
+    [self refreshMenu];
+}
+- (void)pickStructure:(NSMenuItem *)it {
+    yap::settings::set_structure((yap::Style::Structure) it.tag);
+    [self refreshMenu];
+}
+- (void)pickContext:(NSMenuItem *)it {
+    yap::settings::set_context((yap::Style::Context) it.tag);
+    [self refreshMenu];
+}
+- (void)toggleLogin:(NSMenuItem *)it {
+    yap::settings::set_launch_at_login(!yap::settings::launch_at_login());
+    [self refreshMenu];
+}
 
 - (void)showAbout:(id)sender {
     // The s1-mini license carries a naming clause: the model must be credited as
