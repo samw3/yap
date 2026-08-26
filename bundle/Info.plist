@@ -12,6 +12,7 @@
   <key>CFBundleVersion</key>               <string>1</string>
   <key>LSMinimumSystemVersion</key>        <string>15.0</string>
   <key>NSHighResolutionCapable</key>       <true/>
+  <key>CFBundleIconFile</key>              <string>Yap</string>
 
   <!-- Accessory, NOT LSBackgroundOnly: Prohibited activation policy makes
        CGEventTapCreate() return NULL even with Accessibility granted. -->

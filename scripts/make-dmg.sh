@@ -118,6 +118,7 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 cp "$ROOT/bundle/Info.plist" "$APP/Contents/Info.plist"
 cp "$BUILD/yap"              "$APP/Contents/MacOS/yap"
+cp "$ROOT/bundle/Yap.icns"   "$APP/Contents/Resources/Yap.icns"
 chmod +x "$APP/Contents/MacOS/yap"
 for m in "${MODELS[@]}"; do
   cp -c "$m" "$APP/Contents/Resources/" 2>/dev/null || cp "$m" "$APP/Contents/Resources/"

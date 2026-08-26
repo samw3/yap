@@ -18,6 +18,7 @@ printf 'APPL????' > "$APP/Contents/PkgInfo"
 # Single canonical plist. Never let a dev heredoc drift from the release one.
 cp "$REPO/bundle/Info.plist" "$APP/Contents/Info.plist"
 cp "$BUILD/yap"              "$APP/Contents/MacOS/yap"
+cp "$REPO/bundle/Yap.icns"   "$APP/Contents/Resources/Yap.icns"
 chmod +x "$APP/Contents/MacOS/yap"
 
 # Models live in Resources so ggml/Metal lookups and our own paths are bundle-relative.

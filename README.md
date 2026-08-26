@@ -88,6 +88,21 @@ exactly like a mic that works.
 The DMG is ~1.1 GB: the models are bundled into `Contents/Resources`, so there is
 nothing to download on first launch.
 
+### Icon
+
+`bundle/Yap.icns` is committed, so nothing normally needs to regenerate it. The
+artwork is drawn in code (`scripts/make-icon.mm`); after editing it, run:
+
+```sh
+./scripts/make-icon.sh
+```
+
+Each size is drawn natively rather than downsampled, and the speech arcs thin out
+and then drop away as the canvas shrinks — at 16 px the tile holds a clean
+silhouette instead of a smudge. The mark is original artwork on purpose: the
+menu-bar glyph is an SF Symbol, and Apple's SF Symbols license does not allow those
+in an app icon.
+
 ## Permissions
 
 Two grants, both one-time:
