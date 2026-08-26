@@ -41,6 +41,11 @@
 // Resample mono hardware-rate audio to the 16 kHz mono float that Parakeet requires.
 - (BOOL)resampleTo16k:(const std::vector<float> &)in out:(std::vector<float> *)out;
 
+// Bumped on every successful arm. The absolute frame timeline restarts at 0 with
+// each new engine, so a consumer holding frame indices from an earlier generation
+// must re-anchor rather than compare across the boundary.
+- (uint64_t)generation;
+
 // True once a non-zero sample has been seen since arming. A live mic always has
 // a noise floor; exact zeros mean the link is not actually up yet (Bluetooth mics
 // emit digital silence for up to ~1.8 s after start).

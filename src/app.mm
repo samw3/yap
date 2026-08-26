@@ -41,6 +41,8 @@ static constexpr double kMaxHoldSeconds   = 120.0;
     NSDate *           _pressedAt;
     std::vector<float> _utterance;    // mono at hardware rate
     uint64_t           _cursor;
+    uint64_t           _armGen;       // engine generation _cursor is expressed in
+    double             _utteranceRate;
 }
 
 - (void)applicationDidFinishLaunching:(NSNotification *)note {
@@ -206,6 +208,8 @@ static constexpr double kMaxHoldSeconds   = 120.0;
     // simply unavailable -- start at `now` rather than making the user wait.
     _startFrame = now > preroll ? now - preroll : 0;
     _cursor     = _startFrame;
+    _armGen     = [_audio generation];
+    _utteranceRate = rate;
     _utterance.clear();
     _pressedAt  = [NSDate date];
     _recording  = YES;
@@ -219,8 +223,36 @@ static constexpr double kMaxHoldSeconds   = 120.0;
              (unsigned long long) _startFrame, (unsigned long long) preroll, rate);
 }
 
+// The frame timeline restarts at zero with every new engine, so a rebuild in the
+// middle of a hold strands _cursor in a timeline that no longer exists: `now <=
+// _cursor` then holds for the rest of the press and the hold yields zero frames
+// with nothing logged. Re-anchor to the new engine instead, and keep whatever was
+// already captured unless the hardware rate moved -- splicing 44.1 kHz onto
+// 48 kHz would just come out wrong.
+- (void)reanchorIfEngineRebuilt {
+    const uint64_t gen = [_audio generation];
+    if (gen == _armGen) return;
+
+    const double   rate = [_audio hardwareRate];
+    const uint64_t now  = [_audio framesWritten];
+    if (rate != _utteranceRate && !_utterance.empty()) {
+        YAP_WARN("engine rebuilt mid-hold at a new rate (%.0f -> %.0f Hz) — discarding "
+                 "%zu frames captured before it", _utteranceRate, rate, _utterance.size());
+        _utterance.clear();
+    } else {
+        YAP_WARN("engine rebuilt mid-hold (generation %llu -> %llu) — keeping %zu frames, "
+                 "with a gap where the engine restarted",
+                 (unsigned long long) _armGen, (unsigned long long) gen, _utterance.size());
+    }
+    _armGen        = gen;
+    _utteranceRate = rate;
+    _startFrame    = now;
+    _cursor        = now;
+}
+
 - (void)drain {
     if (!_recording) return;
+    [self reanchorIfEngineRebuilt];
     const uint64_t now = [_audio framesWritten];
     if (now <= _cursor) return;
     BOOL skipped = NO;
@@ -307,6 +339,7 @@ static constexpr double kMaxHoldSeconds   = 120.0;
 }
 
 - (void)drainFinal {
+    [self reanchorIfEngineRebuilt];
     const uint64_t now = [_audio framesWritten];
     if (now > _cursor) {
         BOOL skipped = NO;

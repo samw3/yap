@@ -33,6 +33,12 @@ struct TapCtx {
     id                       _cfgObserver;
     dispatch_queue_t         _q;           // serial queue for rebuilds
     BOOL                     _rebuildPending;
+
+    // What the live engine was actually built against, so a configuration-change
+    // notification can be checked against reality instead of believed.
+    AVAudioChannelCount      _hwChannels;
+    AudioDeviceID            _pinnedDevice;
+    uint64_t                 _generation;
 }
 
 - (instancetype)init {
@@ -54,22 +60,77 @@ struct TapCtx {
                                              sizeof(zero), &zero);
     if (st != noErr) YAP_INFO("could not clear HogModeIsAllowed (%d) — harmless", (int) st);
 
-    __weak YapAudio * weakSelf = self;
-    _cfgObserver = [[NSNotificationCenter defaultCenter]
-        addObserverForName:AVAudioEngineConfigurationChangeNotification
-                    object:nil
-                     queue:nil
-                usingBlock:^(NSNotification * _) {
-        // The engine has already STOPPED itself by now. Must not tear it down
-        // from inside this handler: the callback runs on an internal dispatch
-        // queue and a synchronous teardown deadlocks.
-        [weakSelf scheduleRebuild];
-    }];
+    // The configuration-change observer is deliberately NOT registered here: it is
+    // scoped to the live engine in -arm. See -observeConfigurationChangesFor:.
+    _pinnedDevice = kAudioObjectUnknown;
     return self;
 }
 
 - (void)dealloc {
     if (_cfgObserver) [[NSNotificationCenter defaultCenter] removeObserver:_cfgObserver];
+}
+
+- (void)observeConfigurationChangesFor:(AVAudioEngine *)engine {
+    // Scope the observation to THIS engine instance. object:nil also delivered
+    // whatever a torn-down engine posts while it finishes stopping, and acting on
+    // one of those would rebuild the *live* engine for no reason. Defensive rather
+    // than the observed cause -- the flapping traced to a live-engine
+    // notification, which -configurationDidChange is what stops.
+    if (_cfgObserver) [[NSNotificationCenter defaultCenter] removeObserver:_cfgObserver];
+    __weak YapAudio * weakSelf = self;
+    _cfgObserver = [[NSNotificationCenter defaultCenter]
+        addObserverForName:AVAudioEngineConfigurationChangeNotification
+                    object:engine
+                     queue:nil
+                usingBlock:^(NSNotification * _) {
+        // The engine has usually STOPPED itself by now. Must not tear it down
+        // from inside this handler: the callback runs on an internal dispatch
+        // queue and a synchronous teardown deadlocks.
+        [weakSelf scheduleRebuild];
+    }];
+}
+
+// A configuration-change notification is not proof that OUR configuration
+// changed. Require an actual difference before paying for a rebuild -- but treat
+// an engine that is no longer running as always worth rebuilding, since a live
+// `_armed` over a stopped engine is the silent-silence failure this code exists
+// to avoid.
+- (BOOL)configurationDidChange {
+    if (!_engine) return YES;
+
+    if (!_engine.isRunning) {
+        YAP_LOG("engine stopped itself — rebuilding");
+        return YES;
+    }
+
+    AudioDeviceID dev = kAudioObjectUnknown;
+    UInt32 sz = sizeof(dev);
+    AudioObjectPropertyAddress addr = {
+        kAudioHardwarePropertyDefaultInputDevice,
+        kAudioObjectPropertyScopeGlobal,
+        kAudioObjectPropertyElementMain
+    };
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &addr, 0, nullptr, &sz, &dev) == noErr
+        && dev != kAudioObjectUnknown && dev != _pinnedDevice) {
+        YAP_LOG("default input device %u -> %u — rebuilding",
+                (unsigned) _pinnedDevice, (unsigned) dev);
+        return YES;
+    }
+
+    AVAudioFormat * hw = [_engine.inputNode inputFormatForBus:0];
+    if (!hw || hw.sampleRate <= 0 || hw.channelCount == 0) {
+        YAP_LOG("input format no longer readable — rebuilding");
+        return YES;
+    }
+    if (hw.sampleRate != _hwRate || hw.channelCount != _hwChannels) {
+        YAP_LOG("input format %.0f Hz/%u ch -> %.0f Hz/%u ch — rebuilding",
+                _hwRate, (unsigned) _hwChannels, hw.sampleRate, (unsigned) hw.channelCount);
+        return YES;
+    }
+
+    YAP_LOG("configuration change with device and format unchanged (%.0f Hz, %u ch) "
+            "— keeping the engine running", _hwRate, (unsigned) _hwChannels);
+    return NO;
 }
 
 - (void)scheduleRebuild {
@@ -84,6 +145,7 @@ struct TapCtx {
         dispatch_async(dispatch_get_main_queue(), ^{
             s->_rebuildPending = NO;
             if (!s->_armed) return;
+            if (![s configurationDidChange]) return;
             YAP_LOG("audio configuration changed — rebuilding engine");
             [s teardownEngine];
             if (![s arm]) YAP_WARN("rebuild failed; will retry on next arm");
@@ -95,6 +157,7 @@ struct TapCtx {
 - (double)hardwareRate { return _armed ? _hwRate : 0.0; }
 - (uint64_t)framesWritten { return _ctx->ring.written(); }
 - (BOOL)hasRealSignal { return _ctx->saw_signal.load(std::memory_order_relaxed); }
+- (uint64_t)generation { return _generation; }
 
 - (BOOL)arm {
     if (_armed) return YES;
@@ -195,8 +258,11 @@ struct TapCtx {
     }
 
     _armed = YES;
-    YAP_LOG("audio armed: %.0f Hz, %u ch, ring %.1f s",
-            _hwRate, (unsigned) nch, kRingSeconds);
+    _hwChannels = nch;
+    ++_generation;
+    [self observeConfigurationChangesFor:_engine];
+    YAP_LOG("audio armed: %.0f Hz, %u ch, ring %.1f s (generation %llu)",
+            _hwRate, (unsigned) nch, kRingSeconds, (unsigned long long) _generation);
     return YES;
 }
 
@@ -217,15 +283,39 @@ struct TapCtx {
         YAP_INFO("no default input device to pin");
         return;
     }
+    // Remember it even if the pin below fails: what matters later is whether the
+    // default input device has changed since we armed.
+    _pinnedDevice = dev;
+
     AudioUnit au = input.audioUnit;
     if (!au) return;
+
+    // Only write if it differs. Setting kAudioOutputUnitProperty_CurrentDevice is
+    // itself a configuration change, and the AUHAL already starts on the default
+    // input device -- so the redundant write bought us nothing and posted a
+    // notification that used to send us straight into a rebuild.
+    AudioDeviceID cur = kAudioObjectUnknown;
+    UInt32 cursz = sizeof(cur);
+    if (AudioUnitGetProperty(au, kAudioOutputUnitProperty_CurrentDevice,
+                             kAudioUnitScope_Global, 0, &cur, &cursz) == noErr && cur == dev) {
+        YAP_INFO("input device %u already current — not repinning", (unsigned) dev);
+        return;
+    }
+
     OSStatus st = AudioUnitSetProperty(au, kAudioOutputUnitProperty_CurrentDevice,
                                        kAudioUnitScope_Global, 0, &dev, sizeof(dev));
     if (st != noErr) YAP_INFO("could not pin input device %u (%d)", (unsigned) dev, (int) st);
-    else            YAP_INFO("pinned input device %u", (unsigned) dev);
+    else            YAP_LOG("pinned input device %u (was %u)", (unsigned) dev, (unsigned) cur);
 }
 
 - (void)teardownEngine {
+    // Before anything else: a dying engine still posts configuration changes, and
+    // acting on those is what caused the arm/teardown flapping.
+    if (_cfgObserver) {
+        [[NSNotificationCenter defaultCenter] removeObserver:_cfgObserver];
+        _cfgObserver = nil;
+    }
+    _pinnedDevice = kAudioObjectUnknown;
     if (!_engine) { _armed = NO; return; }
     @try { [_engine.inputNode removeTapOnBus:0]; } @catch (NSException * _) {}
     if (_engine.isRunning) [_engine stop];
