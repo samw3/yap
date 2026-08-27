@@ -29,6 +29,7 @@ static constexpr double kMaxHoldSeconds   = 120.0;
     std::unique_ptr<yap::Pipeline> _pipe;
 
     NSTimer * _permPoll;
+    NSTimer * _tapGuard;
     NSTimer * _idleTimer;
     NSTimer * _drainTimer;
 
@@ -71,6 +72,10 @@ static constexpr double kMaxHoldSeconds   = 120.0;
 
     _permPoll = [NSTimer scheduledTimerWithTimeInterval:1.5 repeats:YES
                                                   block:^(NSTimer * t) { [self reevaluate]; }];
+    // Outlives _permPoll on purpose: that one stops as soon as permissions are
+    // granted, which is well before the situations that kill a hotkey.
+    _tapGuard = [NSTimer scheduledTimerWithTimeInterval:5.0 repeats:YES
+                                                  block:^(NSTimer * t) { [self guardHotkey]; }];
 }
 
 - (void)startPipeline {
@@ -96,9 +101,24 @@ static constexpr double kMaxHoldSeconds   = 120.0;
     NSNotificationCenter * wc = [[NSWorkspace sharedWorkspace] notificationCenter];
     __weak YapAppDelegate * weakSelf = self;
 
-    // Event taps and audio engines both die across sleep/wake and fast user
-    // switching, often with no callback at all -- so tear down deliberately on
-    // the way out and rebuild on the way back in.
+    // A sleeping display is a reason to drop the microphone -- the amber indicator
+    // and the sleep assertion must not outlive the screen -- and NOT a reason to
+    // destroy the tap. Tearing the tap down here is what killed F11 across a
+    // hot-corner lock: the display sleeps, the system does not, so the only
+    // notification that comes back is ScreensDidWake. A tap that merely gets
+    // disabled while the login window holds secure input needs no help from us;
+    // reviving that is exactly what Hotkey's own watchdog does.
+    void (^releaseAudio)(NSNotification *) = ^(NSNotification * n) {
+        YapAppDelegate * s = weakSelf; if (!s) return;
+        YAP_LOG("system event %{public}s — releasing audio, keeping the tap",
+                n.name.UTF8String);
+        [s abortRecording];
+        [s->_audio disarm];
+        [s setState:yap::State::Idle];
+    };
+
+    // Audio and tap. Both genuinely die across a real sleep/wake cycle and across
+    // fast user switching, often with no callback at all.
     void (^teardown)(NSNotification *) = ^(NSNotification * n) {
         YapAppDelegate * s = weakSelf; if (!s) return;
         YAP_LOG("system event %{public}s — releasing audio and tap", n.name.UTF8String);
@@ -113,15 +133,52 @@ static constexpr double kMaxHoldSeconds   = 120.0;
         [s reevaluate];   // reinstalls the hotkey; audio re-arms lazily on next press
     };
 
+    [wc addObserverForName:NSWorkspaceScreensDidSleepNotification
+                    object:nil queue:nil usingBlock:releaseAudio];
+
     for (NSString * name in @[NSWorkspaceWillSleepNotification,
-                              NSWorkspaceSessionDidResignActiveNotification,
-                              NSWorkspaceScreensDidSleepNotification]) {
+                              NSWorkspaceSessionDidResignActiveNotification]) {
         [wc addObserverForName:name object:nil queue:nil usingBlock:teardown];
     }
+    // Every notification that can end a teardown belongs here. reevaluate() only
+    // creates a hotkey that is missing, so a redundant one costs nothing, while a
+    // missing one costs the hotkey until someone relaunches the app.
     for (NSString * name in @[NSWorkspaceDidWakeNotification,
-                              NSWorkspaceSessionDidBecomeActiveNotification]) {
+                              NSWorkspaceSessionDidBecomeActiveNotification,
+                              NSWorkspaceScreensDidWakeNotification]) {
         [wc addObserverForName:name object:nil queue:nil usingBlock:rebuild];
     }
+}
+
+// True only when someone could actually be pressing F11. Read from the display
+// and the session rather than tracked in a flag: the failure this guards against
+// IS a wake notification that never arrives, and a flag maintained by the
+// teardown path would be stuck in precisely that case.
+static bool screen_is_usable() {
+    if (CGDisplayIsAsleep(CGMainDisplayID())) return false;
+    CFDictionaryRef d = CGSessionCopyCurrentDictionary();
+    if (!d) return false;
+    bool usable = true;
+    CFBooleanRef locked = (CFBooleanRef) CFDictionaryGetValue(d, CFSTR("CGSSessionScreenIsLocked"));
+    if (locked && CFBooleanGetValue(locked)) usable = false;
+    CFBooleanRef console = (CFBooleanRef) CFDictionaryGetValue(d, kCGSessionOnConsoleKey);
+    if (console && !CFBooleanGetValue(console)) usable = false;
+    CFRelease(d);
+    return usable;
+}
+
+// Backstop for the whole notification scheme, not for one missing name. A hotkey
+// that is gone or dead while the menu still answers looks like a healthy app from
+// the outside and stays broken until a relaunch, so it must not depend on any
+// single notification arriving.
+- (void)guardHotkey {
+    if (_recording) return;                        // never swap the tap under a live hold
+    if (_hotkey && _hotkey->healthy()) return;     // healthy: one pointer test, 5 s apart
+    if (!screen_is_usable()) return;               // asleep, locked, or switched away
+    if (!yap::permissions_check().ok()) return;    // NeedsPermissions already shows this
+    YAP_WARN("hotkey dead while the screen is usable — rebuilding");
+    if (_hotkey) { _hotkey->stop(); _hotkey.reset(); }
+    [self reevaluate];
 }
 
 - (void)abortRecording {
