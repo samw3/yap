@@ -8,7 +8,7 @@ follows it.
 
 Two keys, both in `bundle/Info.plist`:
 
-- `CFBundleShortVersionString` — the semver string users see (currently `0.2.0`)
+- `CFBundleShortVersionString` — the semver string users see (currently `0.3.0`)
 - `CFBundleVersion` — an opaque build counter; increment by 1 on every bump
 
 Judge the element from what changes **for someone using the app**, not from how much

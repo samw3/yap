@@ -100,8 +100,10 @@ static NSString * symbol_for(yap::State s) {
     // --- style: real model inputs (the control line), not cosmetics ---
     const yap::Style st = yap::settings::style();
 
-    NSMenuItem * styleRoot = [[NSMenuItem alloc] initWithTitle:@"Style" action:nil keyEquivalent:@""];
-    NSMenu * styleMenu = [[NSMenu alloc] init];
+    // Styling sits inline in the root menu, not behind a "Style" submenu: it is the
+    // one axis worth changing mid-session, and inline items show which is active
+    // without a hover. Separators fence the group -- the one opening it is the
+    // separator the permissions block already emitted above, so do not add a second.
     struct { const char * label; int tag; } stylings[] = {
         {"Casual", 0}, {"Semi-casual", 1}, {"Semi-formal", 2}, {"Formal", 3}
     };
@@ -110,10 +112,10 @@ static NSString * symbol_for(yap::State s) {
                                                      action:@selector(pickStyling:) keyEquivalent:@""];
         it.target = self; it.tag = o.tag;
         it.state = ((int) st.styling == o.tag) ? NSControlStateValueOn : NSControlStateValueOff;
-        [styleMenu addItem:it];
+        [m addItem:it];
     }
-    styleRoot.submenu = styleMenu;
-    [m addItem:styleRoot];
+
+    [m addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem * structRoot = [[NSMenuItem alloc] initWithTitle:@"Structure" action:nil keyEquivalent:@""];
     NSMenu * structMenu = [[NSMenu alloc] init];
