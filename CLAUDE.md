@@ -35,3 +35,34 @@ A bump renames the release artifact (`dist/Yap-<version>.dmg`), so any already-b
 DMG has to be rebuilt and re-notarized before publishing. Notarization is a ~1 GB
 upload; batch related work into one bump rather than bumping per commit in a series
 that ships together.
+
+## Finishing a change
+
+Building is not testing. When the work is done, relaunch the real app:
+
+```sh
+scripts/dev-run.sh
+```
+
+It builds, bundles, signs with the Developer ID identity, kills the running copy,
+and reopens `~/Applications/Yap.app`, printing the pid it comes back on. Yap is an
+`LSUIElement` app with no window, so "it launched" is not what `open` returns — it
+is the process still being alive a few seconds later, after the ASR and normalizer
+models have loaded off disk:
+
+```sh
+sleep 5 && pgrep -x yap
+```
+
+A crash on load looks exactly like a successful launch until that check comes back
+empty. If it does, or the menu-bar glyph never appears, read the log before touching
+anything else:
+
+```sh
+log stream --predicate 'process == "yap"' --style compact
+```
+
+**If the app comes back up and stays up, commit the work** — no need to ask first.
+The version bump belongs in that same commit (see above). If it crashed, fix the
+crash and relaunch until it holds; a commit that does not launch is worse than an
+uncommitted one, because the next session inherits it as the working baseline.
