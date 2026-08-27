@@ -1,6 +1,7 @@
 #import "statusitem.h"
 
 #import "update.h"
+#import "appicon.h"
 
 #include "permissions.h"
 #include "settings.h"
@@ -290,6 +291,8 @@ static NSString * symbol_for(yap::State s) {
     // The s1-mini license carries a naming clause: the model must be credited as
     // "S1-mini by Superwhisper" with exact capitalization wherever deployed.
     NSAlert * a = [[NSAlert alloc] init];
+    NSImage * icon = yap_app_icon();
+    if (icon) a.icon = icon;
     a.messageText = [NSString stringWithFormat:@"Yap %@",
         [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]];
     a.informativeText =

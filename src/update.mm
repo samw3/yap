@@ -3,6 +3,8 @@
 #import <AppKit/AppKit.h>
 #import <Security/Security.h>
 
+#import "appicon.h"
+
 #include "log.h"
 #include "settings.h"
 #include "version.h"
@@ -485,6 +487,8 @@ static BOOL verify_bundle(NSURL * app, BOOL validateResources, NSError ** err) {
     NSAlert * a = [[NSAlert alloc] init];
     a.messageText = title;
     a.informativeText = text ?: @"";
+    NSImage * icon = yap_app_icon();
+    if (icon) a.icon = icon;
     for (NSString * b in (buttons.count ? buttons : @[@"OK"])) [a addButtonWithTitle:b];
     [NSApp activateIgnoringOtherApps:YES];
     return [a runModal];
