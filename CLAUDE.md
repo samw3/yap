@@ -31,6 +31,12 @@ gaining a flag is not a release of Yap.
 When one commit spans categories, take the highest element that applies — a commit
 that adds a feature and fixes two bugs is a minor bump, not three commits' worth.
 
+The version is also the updater's only input. Installed copies read
+`/releases/latest` and compare its **tag** against their own
+`CFBundleShortVersionString`, so a release has to be tagged `v<version>` and carry the
+DMG as an asset or nothing in the field will ever see it. A draft is invisible to them,
+which is the intended behaviour while an upload is still in flight.
+
 A bump renames the release artifact (`dist/Yap-<version>.dmg`), so any already-built
 DMG has to be rebuilt and re-notarized before publishing. Notarization is a ~1 GB
 upload; batch related work into one bump rather than bumping per commit in a series

@@ -51,6 +51,7 @@ add_executable(yap
   src/audio.mm
   src/inject.mm
   src/settings.mm
+  src/update.mm
   src/state.cpp
   src/wav.cpp
   src/asr.cpp
@@ -71,6 +72,7 @@ target_link_libraries(yap PRIVATE
   "-framework CoreAudio"
   "-framework AudioToolbox"       # AudioUnitSetProperty (input device pinning)
   "-framework ServiceManagement"    # SMAppService (launch at login)
+  "-framework Security"             # SecStaticCode* (verifying an update)
 )
 
 # ---- tests ------------------------------------------------------------------
@@ -86,3 +88,7 @@ add_test(NAME utf8 COMMAND test-utf8)
 add_executable(test-degenerate tests/test_degenerate.cpp)
 target_include_directories(test-degenerate PRIVATE src)
 add_test(NAME degenerate COMMAND test-degenerate)
+
+add_executable(test-version tests/test_version.cpp)
+target_include_directories(test-version PRIVATE src)
+add_test(NAME version COMMAND test-version)

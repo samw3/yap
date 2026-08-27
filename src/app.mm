@@ -1,6 +1,7 @@
 #import "app.h"
 #import "statusitem.h"
 #import "audio.h"
+#import "update.h"
 
 #include "log.h"
 #include "permissions.h"
@@ -22,6 +23,13 @@ static constexpr double kDrainInterval    = 0.25;   // keep the ring well ahead 
 static constexpr double kMinHoldSeconds   = 0.20;   // shorter presses are accidental taps
 static constexpr double kMaxHoldSeconds   = 120.0;
 
+// The updater enforces the user's preference and its own once-a-day interval, so
+// these two only decide how often it is *asked*. The first ask is deliberately
+// late: launch is already loading 1.1 GB of weights off disk, and an update is
+// never urgent enough to share that moment.
+static constexpr double kFirstUpdateAsk   = 15.0;
+static constexpr double kUpdateAskEvery   = 6 * 60 * 60;
+
 @implementation YapAppDelegate {
     YapStatusItem *                _status;
     YapAudio *                     _audio;
@@ -30,6 +38,7 @@ static constexpr double kMaxHoldSeconds   = 120.0;
 
     NSTimer * _permPoll;
     NSTimer * _tapGuard;
+    NSTimer * _updatePoll;
     NSTimer * _idleTimer;
     NSTimer * _drainTimer;
 
@@ -76,6 +85,16 @@ static constexpr double kMaxHoldSeconds   = 120.0;
     // granted, which is well before the situations that kill a hotkey.
     _tapGuard = [NSTimer scheduledTimerWithTimeInterval:5.0 repeats:YES
                                                   block:^(NSTimer * t) { [self guardHotkey]; }];
+
+    // Repeating as well as delayed, because Yap is a launch-at-login app that can
+    // stay up for weeks: a check that only ran at startup would never run again
+    // on the machines most likely to fall behind.
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kFirstUpdateAsk * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{ [YapUpdater.shared checkInBackground]; });
+    _updatePoll = [NSTimer scheduledTimerWithTimeInterval:kUpdateAskEvery repeats:YES
+                                                    block:^(NSTimer * t) {
+        [YapUpdater.shared checkInBackground];
+    }];
 }
 
 - (void)startPipeline {
@@ -456,6 +475,8 @@ static bool screen_is_usable() {
 
 - (void)applicationWillTerminate:(NSNotification *)note {
     [_permPoll invalidate];
+    [_tapGuard invalidate];
+    [_updatePoll invalidate];
     [_idleTimer invalidate];
     [_drainTimer invalidate];
     if (_hotkey) _hotkey->stop();

@@ -1,5 +1,7 @@
 #import "statusitem.h"
 
+#import "update.h"
+
 #include "permissions.h"
 #include "settings.h"
 #include "log.h"
@@ -7,6 +9,9 @@
 @implementation YapStatusItem {
     NSStatusItem * _item;
     yap::State     _state;
+    NSMenuItem *   _updateItem;        // re-titled in place while the menu is open
+    BOOL           _updateActionable;
+    BOOL           _updateCancellable;
 }
 
 - (instancetype)init {
@@ -15,6 +20,10 @@
     _item = [[NSStatusBar systemStatusBar] statusItemWithLength:NSVariableStatusItemLength];
     _item.menu = [[NSMenu alloc] init];
     _item.menu.delegate = (id<NSMenuDelegate>) self;
+    [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(updaterChanged:)
+                                               name:YapUpdaterDidChangeNotification
+                                             object:nil];
     [self setState:_state];
     return self;
 }
@@ -97,13 +106,16 @@ static NSString * symbol_for(yap::State s) {
 
     [m addItem:[NSMenuItem separatorItem]];
 
+    // --- updates: a row only when there is something to say ---
+    [self appendUpdateItemsTo:m];
+
     // --- style: real model inputs (the control line), not cosmetics ---
     const yap::Style st = yap::settings::style();
 
     // Styling sits inline in the root menu, not behind a "Style" submenu: it is the
     // one axis worth changing mid-session, and inline items show which is active
-    // without a hover. Separators fence the group -- the one opening it is the
-    // separator the permissions block already emitted above, so do not add a second.
+    // without a hover. Separators fence the group -- the one opening it is emitted
+    // by the permissions block above, or by the update block when it drew a row.
     struct { const char * label; int tag; } stylings[] = {
         {"Casual", 0}, {"Semi-casual", 1}, {"Semi-formal", 2}, {"Formal", 3}
     };
@@ -149,6 +161,21 @@ static NSString * symbol_for(yap::State s) {
     login.state = yap::settings::launch_at_login() ? NSControlStateValueOn : NSControlStateValueOff;
     [m addItem:login];
 
+    NSMenuItem * autoUpd = [[NSMenuItem alloc] initWithTitle:@"Check for Updates Automatically"
+                                                      action:@selector(toggleAutoUpdate:) keyEquivalent:@""];
+    autoUpd.target = self;
+    autoUpd.state = yap::settings::auto_update_check() ? NSControlStateValueOn : NSControlStateValueOff;
+    // The only network access in the app, so the toggle says so on hover rather
+    // than leaving someone to guess what "automatically" reaches out to.
+    autoUpd.toolTip = @"Once a day, asks api.github.com whether a newer release exists. "
+                       "This is the only network request Yap makes.";
+    [m addItem:autoUpd];
+
+    NSMenuItem * checkNow = [[NSMenuItem alloc] initWithTitle:@"Check for Updates Now…"
+                                                       action:@selector(checkForUpdates:) keyEquivalent:@""];
+    checkNow.target = self;
+    [m addItem:checkNow];
+
     [m addItem:[NSMenuItem separatorItem]];
     NSMenuItem * about = [[NSMenuItem alloc] initWithTitle:@"About Yap"
                                                     action:@selector(showAbout:) keyEquivalent:@""];
@@ -188,11 +215,83 @@ static NSString * symbol_for(yap::State s) {
     [self refreshMenu];
 }
 
+#pragma mark - updates
+
+// Nothing is drawn unless the updater has something to report, so the menu of an
+// up-to-date copy looks exactly as it did before updates existed.
+- (void)appendUpdateItemsTo:(NSMenu *)m {
+    YapUpdater * up = YapUpdater.shared;
+    NSString * line = [up menuLine];
+    _updateItem = nil;
+    if (!line) return;
+
+    _updateActionable  = [up menuLineIsActionable];
+    _updateCancellable = [up canCancel];
+    _updateItem = [[NSMenuItem alloc] initWithTitle:line
+                                             action:_updateActionable ? @selector(installUpdate:) : nil
+                                      keyEquivalent:@""];
+    _updateItem.target = self;
+    _updateItem.enabled = _updateActionable;
+    _updateItem.toolTip = up.failureReason;
+    [m addItem:_updateItem];
+
+    if (_updateCancellable) {
+        NSMenuItem * stop = [[NSMenuItem alloc] initWithTitle:@"Stop Download"
+                                                       action:@selector(stopDownload:) keyEquivalent:@""];
+        stop.target = self;
+        [m addItem:stop];
+    }
+    if (up.availableVersion.length && up.releasePage) {
+        NSMenuItem * notes = [[NSMenuItem alloc] initWithTitle:@"Release Notes…"
+                                                        action:@selector(openReleaseNotes:) keyEquivalent:@""];
+        notes.target = self;
+        [m addItem:notes];
+    }
+    [m addItem:[NSMenuItem separatorItem]];
+}
+
+// A download posts progress twice a second, and rebuilding the whole menu under
+// an open one is jarring. Re-title the row in place while its shape holds, and
+// fall back to a rebuild only when a row appears, disappears, or changes what
+// clicking it does.
+- (void)updaterChanged:(NSNotification *)n {
+    YapUpdater * up = YapUpdater.shared;
+    NSString * line = [up menuLine];
+    if (_updateItem && line
+        && [up menuLineIsActionable] == _updateActionable
+        && [up canCancel] == _updateCancellable) {
+        _updateItem.title = line;
+        _updateItem.toolTip = up.failureReason;
+        return;
+    }
+    [self refreshMenu];
+}
+
+- (void)installUpdate:(id)sender { [YapUpdater.shared installAvailableUpdate]; }
+
+- (void)stopDownload:(id)sender { [YapUpdater.shared cancelDownload]; }
+
+- (void)openReleaseNotes:(id)sender {
+    NSURL * u = YapUpdater.shared.releasePage;
+    if (u) [NSWorkspace.sharedWorkspace openURL:u];
+}
+
+- (void)checkForUpdates:(id)sender { [YapUpdater.shared checkNow]; }
+
+- (void)toggleAutoUpdate:(NSMenuItem *)it {
+    const bool on = !yap::settings::auto_update_check();
+    yap::settings::set_auto_update_check(on);
+    [self refreshMenu];
+    // Turning it on is itself a request to look now, rather than tomorrow.
+    if (on) [YapUpdater.shared checkInBackground];
+}
+
 - (void)showAbout:(id)sender {
     // The s1-mini license carries a naming clause: the model must be credited as
     // "S1-mini by Superwhisper" with exact capitalization wherever deployed.
     NSAlert * a = [[NSAlert alloc] init];
-    a.messageText = @"Yap";
+    a.messageText = [NSString stringWithFormat:@"Yap %@",
+        [NSBundle.mainBundle objectForInfoDictionaryKey:@"CFBundleShortVersionString"]];
     a.informativeText =
         @"Push-to-talk dictation. Everything runs on-device.\n\n"
          "Transcription: Parakeet TDT 0.6B v3 (NVIDIA), ggml conversion by ggml-org.\n"

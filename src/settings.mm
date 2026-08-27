@@ -10,6 +10,8 @@ static NSString * const kStyling   = @"yap.styling";
 static NSString * const kStructure = @"yap.structure";
 static NSString * const kContext   = @"yap.context";
 static NSString * const kIdle      = @"yap.idleTimeout";
+static NSString * const kAutoUpd   = @"yap.autoUpdateCheck";
+static NSString * const kLastCheck = @"yap.lastUpdateCheck";
 
 Style style() {
     NSUserDefaults * d = [NSUserDefaults standardUserDefaults];
@@ -36,6 +38,24 @@ double idle_timeout() {
 }
 void set_idle_timeout(double s) {
     [[NSUserDefaults standardUserDefaults] setDouble:s forKey:kIdle];
+}
+
+// Defaults to on, and the absence of the key is what "never answered" looks
+// like -- boolForKey: alone would read that as a deliberate no.
+bool auto_update_check() {
+    NSUserDefaults * d = [NSUserDefaults standardUserDefaults];
+    return [d objectForKey:kAutoUpd] ? [d boolForKey:kAutoUpd] : true;
+}
+void set_auto_update_check(bool on) {
+    [[NSUserDefaults standardUserDefaults] setBool:on forKey:kAutoUpd];
+    YAP_LOG("automatic update check -> %{public}s", on ? "on" : "off");
+}
+
+double last_update_check() {
+    return [[NSUserDefaults standardUserDefaults] doubleForKey:kLastCheck];
+}
+void set_last_update_check(double when) {
+    [[NSUserDefaults standardUserDefaults] setDouble:when forKey:kLastCheck];
 }
 
 // SMAppService, not the deprecated SMLoginItemSetEnabled / LSSharedFileList.

@@ -1,7 +1,9 @@
 # yap
 
 Push-to-talk dictation for macOS. Hold **F11**, speak, release — cleaned-up text is
-inserted into whatever window has focus. Fully on-device; no network.
+inserted into whatever window has focus. Dictation is entirely on-device: audio and
+transcripts never leave the Mac. The one network request Yap makes is a daily update
+check against GitHub, and the menu turns it off.
 
 Two models run warm in a single process:
 
@@ -88,6 +90,15 @@ exactly like a mic that works.
 The DMG is ~1.1 GB: the models are bundled into `Contents/Resources`, so there is
 nothing to download on first launch.
 
+Publishing the release is what makes an update reach existing installs. They read
+`/releases/latest`, so drafts and pre-releases are invisible to them by design, and
+they take the first `.dmg` asset on it. The comparison is against the release **tag**,
+not the asset name, so the tag has to be `v<version>`:
+
+```sh
+gh release create "v$VER" "dist/Yap-$VER.dmg" --title "Yap $VER" --notes-file <notes>
+```
+
 ### Icon
 
 `bundle/Yap.icns` is committed, so nothing normally needs to regenerate it. The
@@ -110,6 +121,36 @@ Two grants, both one-time:
 - **Microphone** — to record while you hold the key.
 - **Accessibility** — to observe the hotkey and insert text. This is the superset that
   also covers Input Monitoring; there is no separate step.
+
+## Updates
+
+Yap updates itself from this repo's [releases](https://github.com/samw3/yap/releases).
+Once a day it asks `api.github.com` for the latest release and compares its tag against
+the running version. Nothing is downloaded and nothing is installed without a click, and
+an automatic check never raises an alert — it only changes what the menu says.
+**Check for Updates Automatically** turns it off, and with it the app's only network
+access.
+
+Choosing the update row downloads the DMG — shown as a percentage, and stoppable — and
+then:
+
+1. `hdiutil attach` verifies the image's own checksum, so a truncated download fails
+   there rather than becoming a broken install.
+2. The app inside is checked against a pinned code requirement: bundle identifier
+   `com.samw3.yap`, Developer ID leaf on team `266VNLKVKQ`, chained to Apple's root.
+   The URL is not what makes a downloaded gigabyte safe to run — this is.
+3. It is copied next to the installed app and re-checked in full, resource seal
+   included, before anything is replaced.
+4. The two bundles are exchanged in one atomic `renamex_np(RENAME_SWAP)`, and Yap
+   relaunches into the new one.
+
+Microphone and Accessibility are not asked for again: the designated requirement does
+not change across a release, which is the same reason `dev-run.sh` signs with a real
+identity rather than ad-hoc.
+
+In-place installation needs the app bundle to be writable by you — true of
+`/Applications` and `~/Applications` for whoever installed it. If it is not, the menu
+says so instead of failing halfway, and the release page is one click away.
 
 ## Attribution
 

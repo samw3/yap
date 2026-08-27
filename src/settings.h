@@ -20,5 +20,13 @@ void   set_idle_timeout(double seconds);
 bool launch_at_login();
 void set_launch_at_login(bool on);
 
+// The update check is the only thing in Yap that touches the network. With this
+// off, nothing in the app ever opens a socket.
+bool auto_update_check();
+void set_auto_update_check(bool on);
+
+double last_update_check();          // unix time; 0 == never checked
+void   set_last_update_check(double when);
+
 }  // namespace settings
 }  // namespace yap
