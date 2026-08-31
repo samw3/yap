@@ -90,14 +90,39 @@ exactly like a mic that works.
 The DMG is ~1.1 GB: the models are bundled into `Contents/Resources`, so there is
 nothing to download on first launch.
 
-Publishing the release is what makes an update reach existing installs. They read
-`/releases/latest`, so drafts and pre-releases are invisible to them by design, and
-they take the first `.dmg` asset on it. The comparison is against the release **tag**,
-not the asset name, so the tag has to be `v<version>`:
+### Cut a release
+
+`release.sh` is the whole thing in one shot: it runs `make-dmg.sh` above, then
+publishes a GitHub release that installed copies will actually be offered.
 
 ```sh
-gh release create "v$VER" "dist/Yap-$VER.dmg" --title "Yap $VER" --notes-file <notes>
+./scripts/release.sh              # build, notarize, publish
+./scripts/release.sh --dry-run    # every check, nothing published
+./scripts/release.sh --reuse-dmg  # publish a DMG that is already built
 ```
+
+Publishing is what makes an update reach existing installs. They read
+`/releases/latest`, so drafts and pre-releases are invisible to them by design, and
+they take the first `.dmg` asset on it. The comparison is against the release **tag**,
+not the asset name, so the tag has to be `v<version>` — which is why the version in
+`bundle/Info.plist` is the script's only input.
+
+The app is the strict party here, and a release it refuses is a release nobody
+gets, so everything it checks at install time is checked first, on the exact file
+about to be uploaded: that the DMG carries a stapled ticket, that the bundle inside
+satisfies `anchor apple generic and identifier … and leaf OU = …`, and that its
+`CFBundleShortVersionString` agrees with the tag. The repo, bundle id and team id
+are read out of `src/update.mm` rather than repeated, so the two cannot drift.
+
+The asset is uploaded to a **draft** and the release is flipped to published only
+once the bytes are confirmed to have landed — a release that goes public mid-upload
+is one whose `.dmg` is half a disk image. Before that, the script refuses a dirty
+tree, a HEAD that origin does not have, a tag that already exists, and a version
+that is not newer than the current `/releases/latest`.
+
+Notes default to the commit subjects since the last release; override with
+`--notes-file=F` or `--notes=TEXT`. A run that dies mid-upload leaves a draft, which
+is invisible to installs; `--replace-draft` remakes it.
 
 ### Icon
 
