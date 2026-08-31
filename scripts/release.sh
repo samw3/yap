@@ -207,7 +207,9 @@ fi
 
 echo "==> verify $(basename "$DMG")"
 
-if [ "$DRY_RUN" = 0 ]; then
+# Gated on --skip-notarize, not on --dry-run: a rehearsal that skips the one
+# check standing between a downloader and a Gatekeeper refusal is not a rehearsal.
+if [[ " ${DMG_ARGS[*]+${DMG_ARGS[*]}} " != *" --skip-notarize "* ]]; then
   xcrun stapler validate "$DMG" >/dev/null \
     || die "$DMG has no stapled notarization ticket. Publishing it would hand
    every downloader a Gatekeeper refusal. Rebuild without --skip-notarize."
