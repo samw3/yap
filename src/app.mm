@@ -18,7 +18,6 @@
 // Tunables. Pre-roll catches the very common case of starting to speak a hair
 // before the key bottoms out.
 static constexpr double kPreRollSeconds   = 0.30;
-static constexpr double kIdleTimeout      = 60.0;   // 0 disables teardown
 static constexpr double kDrainInterval    = 0.25;   // keep the ring well ahead of eviction
 static constexpr double kMinHoldSeconds   = 0.20;   // shorter presses are accidental taps
 static constexpr double kMaxHoldSeconds   = 120.0;
@@ -78,6 +77,11 @@ static constexpr double kUpdateAskEvery   = 6 * 60 * 60;
 
     [self startPipeline];
     [self observeSystemEvents];
+
+    [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(idleTimeoutChanged:)
+                                               name:YapIdleTimeoutDidChangeNotification
+                                             object:nil];
 
     _permPoll = [NSTimer scheduledTimerWithTimeInterval:1.5 repeats:YES
                                                   block:^(NSTimer * t) { [self reevaluate]; }];
@@ -472,6 +476,16 @@ static bool screen_is_usable() {
 }
 
 - (void)cancelIdleTimer { [_idleTimer invalidate]; _idleTimer = nil; }
+
+// The setting changed under a countdown that was scheduled against the old value.
+// A press owns the timer for its duration and -onKeyUp reschedules from the new
+// value anyway, and a disarmed engine has nothing left to tear down -- so the
+// only case that needs a fresh deadline is a mic sitting armed and unused.
+- (void)idleTimeoutChanged:(NSNotification *)n {
+    if (_recording) return;
+    if (![_audio isArmed]) { [self cancelIdleTimer]; return; }
+    [self scheduleIdleTimer];
+}
 
 - (void)applicationWillTerminate:(NSNotification *)note {
     [_permPoll invalidate];

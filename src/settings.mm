@@ -4,6 +4,8 @@
 #include "settings.h"
 #include "log.h"
 
+NSString * const YapIdleTimeoutDidChangeNotification = @"YapIdleTimeoutDidChange";
+
 namespace yap { namespace settings {
 
 static NSString * const kStyling   = @"yap.styling";
@@ -38,6 +40,9 @@ double idle_timeout() {
 }
 void set_idle_timeout(double s) {
     [[NSUserDefaults standardUserDefaults] setDouble:s forKey:kIdle];
+    YAP_LOG("microphone sleep -> %{public}s", s > 0 ? "on" : "never");
+    [NSNotificationCenter.defaultCenter postNotificationName:YapIdleTimeoutDidChangeNotification
+                                                      object:nil];
 }
 
 // Defaults to on, and the absence of the key is what "never answered" looks

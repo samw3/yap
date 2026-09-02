@@ -7,6 +7,8 @@
 #include "settings.h"
 #include "log.h"
 
+#include <cmath>
+
 @implementation YapStatusItem {
     NSStatusItem * _item;
     yap::State     _state;
@@ -169,6 +171,34 @@ static NSString * symbol_for(yap::State s) {
     login.state = yap::settings::launch_at_login() ? NSControlStateValueOn : NSControlStateValueOff;
     [settingsMenu addItem:login];
 
+    // How long the mic stays open between presses. Offered as durations rather
+    // than an on/off switch because the setting has always been one, and because
+    // the trade it makes is a matter of degree: a longer wait keeps the first
+    // press of a burst instant, a shorter one gets the amber indicator off the
+    // menu bar sooner. "Never" is the one qualitative choice, and it costs more
+    // than it looks like -- hence the tooltip.
+    NSMenuItem * sleepRoot = [[NSMenuItem alloc] initWithTitle:@"Microphone Sleep" action:nil keyEquivalent:@""];
+    NSMenu * sleepMenu = [[NSMenu alloc] init];
+    // Tolerant compare: a value hand-written with `defaults write` should still
+    // tick the row it matches rather than leaving the submenu blank.
+    const long idle = std::lround(yap::settings::idle_timeout());
+    struct { const char * label; long seconds; } sleeps[] = {
+        {"After 30 Seconds", 30}, {"After 1 Minute", 60}, {"After 5 Minutes", 300}, {"Never", 0}
+    };
+    for (auto & o : sleeps) {
+        NSMenuItem * it = [[NSMenuItem alloc] initWithTitle:@(o.label)
+                                                     action:@selector(pickIdleTimeout:) keyEquivalent:@""];
+        it.target = self; it.tag = (NSInteger) o.seconds;
+        it.state = (idle == o.seconds) ? NSControlStateValueOn : NSControlStateValueOff;
+        if (o.seconds == 0)
+            it.toolTip = @"Holds the microphone open until the screen locks or the Mac sleeps. "
+                          "The amber recording indicator stays lit the whole time, and macOS will "
+                          "not idle-sleep while it is.";
+        [sleepMenu addItem:it];
+    }
+    sleepRoot.submenu = sleepMenu;
+    [settingsMenu addItem:sleepRoot];
+
     [settingsMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem * autoUpd = [[NSMenuItem alloc] initWithTitle:@"Check for Updates Automatically"
@@ -221,6 +251,10 @@ static NSString * symbol_for(yap::State s) {
 }
 - (void)pickContext:(NSMenuItem *)it {
     yap::settings::set_context((yap::Style::Context) it.tag);
+    [self refreshMenu];
+}
+- (void)pickIdleTimeout:(NSMenuItem *)it {
+    yap::settings::set_idle_timeout((double) it.tag);
     [self refreshMenu];
 }
 - (void)toggleLogin:(NSMenuItem *)it {
