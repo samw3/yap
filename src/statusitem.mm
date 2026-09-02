@@ -183,7 +183,7 @@ static NSString * symbol_for(yap::State s) {
     // tick the row it matches rather than leaving the submenu blank.
     const long idle = std::lround(yap::settings::idle_timeout());
     struct { const char * label; long seconds; } sleeps[] = {
-        {"After 30 Seconds", 30}, {"After 1 Minute", 60}, {"After 5 Minutes", 300}, {"Never", 0}
+        {"After 1 Minute", 60}, {"After 15 Minutes", 900}, {"After 1 Hour", 3600}, {"Never", 0}
     };
     for (auto & o : sleeps) {
         NSMenuItem * it = [[NSMenuItem alloc] initWithTitle:@(o.label)
