@@ -8,8 +8,8 @@
   <key>CFBundleDisplayName</key>           <string>Yap</string>
   <key>CFBundlePackageType</key>           <string>APPL</string>
   <key>CFBundleInfoDictionaryVersion</key> <string>6.0</string>
-  <key>CFBundleShortVersionString</key>    <string>0.4.0</string>
-  <key>CFBundleVersion</key>               <string>5</string>
+  <key>CFBundleShortVersionString</key>    <string>0.5.0</string>
+  <key>CFBundleVersion</key>               <string>6</string>
   <key>LSMinimumSystemVersion</key>        <string>15.0</string>
   <key>NSHighResolutionCapable</key>       <true/>
   <key>CFBundleIconFile</key>              <string>Yap</string>

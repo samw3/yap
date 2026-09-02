@@ -156,11 +156,20 @@ static NSString * symbol_for(yap::State s) {
     ctxRoot.submenu = ctxMenu;
     [m addItem:ctxRoot];
 
+    // Everything below the style axes is set once and left alone, so it lives one
+    // level down rather than lengthening the root menu. The urgent update rows are
+    // not in here -- those still surface at the top, where they can be seen without
+    // a hover.
+    NSMenuItem * settingsRoot = [[NSMenuItem alloc] initWithTitle:@"Settings" action:nil keyEquivalent:@""];
+    NSMenu * settingsMenu = [[NSMenu alloc] init];
+
     NSMenuItem * login = [[NSMenuItem alloc] initWithTitle:@"Launch at Login"
                                                     action:@selector(toggleLogin:) keyEquivalent:@""];
     login.target = self;
     login.state = yap::settings::launch_at_login() ? NSControlStateValueOn : NSControlStateValueOff;
-    [m addItem:login];
+    [settingsMenu addItem:login];
+
+    [settingsMenu addItem:[NSMenuItem separatorItem]];
 
     NSMenuItem * autoUpd = [[NSMenuItem alloc] initWithTitle:@"Check for Updates Automatically"
                                                       action:@selector(toggleAutoUpdate:) keyEquivalent:@""];
@@ -170,12 +179,15 @@ static NSString * symbol_for(yap::State s) {
     // than leaving someone to guess what "automatically" reaches out to.
     autoUpd.toolTip = @"Once a day, asks api.github.com whether a newer release exists. "
                        "This is the only network request Yap makes.";
-    [m addItem:autoUpd];
+    [settingsMenu addItem:autoUpd];
 
     NSMenuItem * checkNow = [[NSMenuItem alloc] initWithTitle:@"Check for Updates Now…"
                                                        action:@selector(checkForUpdates:) keyEquivalent:@""];
     checkNow.target = self;
-    [m addItem:checkNow];
+    [settingsMenu addItem:checkNow];
+
+    settingsRoot.submenu = settingsMenu;
+    [m addItem:settingsRoot];
 
     [m addItem:[NSMenuItem separatorItem]];
     NSMenuItem * about = [[NSMenuItem alloc] initWithTitle:@"About Yap"
