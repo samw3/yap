@@ -241,6 +241,8 @@ static bool screen_is_usable() {
 
     if (_hotkey && !_hotkey->healthy()) { [self setState:yap::State::TapDead]; return; }
 
+    [self armEagerlyIfNeverSleeps];
+
     if (!_recording) {
         [self setState:[_audio isArmed] ? yap::State::Armed : yap::State::Idle];
     }
@@ -477,14 +479,41 @@ static bool screen_is_usable() {
 
 - (void)cancelIdleTimer { [_idleTimer invalidate]; _idleTimer = nil; }
 
+// "Never" means the microphone is open whenever the app is usable, not merely
+// that it stays open once a press has opened it. Every other timeout arms lazily
+// on key-down and there is nothing to do here; this is the single value that has
+// to be honoured before the first press.
+//
+// Called from -reevaluate rather than only at launch, because that is also what
+// runs after wake and after an unlock -- both of which disarm. A launch-at-login
+// app that stays up for weeks wakes far more often than it launches, so arming
+// only at startup would honour the setting on day one and never again.
+- (void)armEagerlyIfNeverSleeps {
+    if (_recording || [_audio isArmed]) return;
+    if (yap::settings::idle_timeout() > 0) return;
+    if (!screen_is_usable()) return;                // asleep, locked, or switched away
+    if (!yap::permissions_check().ok()) return;
+    if ([_audio arm]) {
+        YAP_LOG("microphone sleep is never — armed without waiting for a press");
+        [self setState:yap::State::Armed];
+    } else {
+        // Mic permission can be granted on paper while no input device is ready
+        // yet. Not a failure worth surfacing: the next press arms it.
+        YAP_WARN("eager arm failed — the next press will try again");
+    }
+}
+
 // The setting changed under a countdown that was scheduled against the old value.
 // A press owns the timer for its duration and -onKeyUp reschedules from the new
-// value anyway, and a disarmed engine has nothing left to tear down -- so the
-// only case that needs a fresh deadline is a mic sitting armed and unused.
+// value anyway, so an armed mic just needs the new deadline. A disarmed one has
+// nothing to tear down -- but if the new value is "never" it should not be
+// waiting for a press either, or picking "never" from the menu would look like
+// it did nothing at all.
 - (void)idleTimeoutChanged:(NSNotification *)n {
     if (_recording) return;
-    if (![_audio isArmed]) { [self cancelIdleTimer]; return; }
-    [self scheduleIdleTimer];
+    if ([_audio isArmed]) { [self scheduleIdleTimer]; return; }
+    [self cancelIdleTimer];
+    [self armEagerlyIfNeverSleeps];
 }
 
 - (void)applicationWillTerminate:(NSNotification *)note {
