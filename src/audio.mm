@@ -31,6 +31,7 @@ struct TapCtx {
     AVAudioConverter *       _conv;        // hw-rate mono -> 16k mono
     double                   _convFromRate;
     id                       _cfgObserver;
+    AudioObjectPropertyListenerBlock _defaultInputListener;
     dispatch_queue_t         _q;           // serial queue for rebuilds
     BOOL                     _rebuildPending;
 
@@ -63,11 +64,54 @@ struct TapCtx {
     // The configuration-change observer is scoped to the live engine, so it is
     // registered in -arm rather than here. See -observeConfigurationChangesFor:.
     _pinnedDevice = kAudioObjectUnknown;
+
+    [self observeDefaultInputDevice];
     return self;
 }
 
 - (void)dealloc {
     if (_cfgObserver) [[NSNotificationCenter defaultCenter] removeObserver:_cfgObserver];
+    if (_defaultInputListener) {
+        AudioObjectPropertyAddress addr = {
+            kAudioHardwarePropertyDefaultInputDevice,
+            kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+        AudioObjectRemovePropertyListenerBlock(kAudioObjectSystemObject, &addr,
+                                               _q, _defaultInputListener);
+    }
+}
+
+// Watch the SYSTEM default input, not just our own engine.
+//
+// AVAudioEngineConfigurationChangeNotification only fires when something
+// disturbs the engine we built. Because -pinInputDevice: binds the AUHAL to one
+// device, choosing a different input elsewhere -- plugging in a headset, or
+// AirPods connecting -- leaves our device untouched and posts us nothing: the
+// engine keeps happily recording the mic the user just switched away from.
+//
+// The reverse direction was always covered, since a device that disappears stops
+// the engine and -configurationDidChange catches that. This is the half that was
+// missing, and it matters most with the sleep timeout set to never: with a
+// timeout the stale pin is corrected by the next arm, but a mic that never
+// sleeps never re-pins, so it would stay on the wrong device indefinitely.
+- (void)observeDefaultInputDevice {
+    AudioObjectPropertyAddress addr = {
+        kAudioHardwarePropertyDefaultInputDevice,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain };
+    __weak YapAudio * weakSelf = self;
+    _defaultInputListener = ^(UInt32 n, const AudioObjectPropertyAddress * a) {
+        (void) n; (void) a;
+        // Same debounce and same reality check as an engine-side change: this
+        // only reports that the default MOVED, and -configurationDidChange is
+        // what decides whether it moved away from the device we are pinned to.
+        [weakSelf scheduleRebuild];
+    };
+    OSStatus st = AudioObjectAddPropertyListenerBlock(kAudioObjectSystemObject, &addr,
+                                                      _q, _defaultInputListener);
+    if (st != noErr) {
+        YAP_WARN("could not watch the default input device (%d) — a mid-session "
+                 "input switch will not be picked up until the next arm", (int) st);
+        _defaultInputListener = nil;
+    }
 }
 
 - (void)observeConfigurationChangesFor:(AVAudioEngine *)engine {
