@@ -21,8 +21,11 @@
 
 - (instancetype)init;
 
-// Idempotent. Returns NO if the engine could not start (no input device yet, or
-// microphone permission missing).
+// Idempotent, and safe to call from the main thread: the CoreAudio work runs on
+// a private queue and this waits only a bounded time for it. Returns NO if the
+// engine could not start (no input device yet, microphone permission missing) or
+// if the HAL did not answer in time -- in that last case the attempt is still
+// running, and a later call may find it armed.
 - (BOOL)arm;
 - (void)disarm;
 - (BOOL)isArmed;
@@ -38,8 +41,12 @@
 - (BOOL)copyRangeFrom:(uint64_t)fromFrame to:(uint64_t)toFrame into:(std::vector<float> *)out
               skipped:(BOOL *)skipped;
 
-// Resample mono hardware-rate audio to the 16 kHz mono float that Parakeet requires.
-- (BOOL)resampleTo16k:(const std::vector<float> &)in out:(std::vector<float> *)out;
+// Resample mono audio captured at `fromRate` to the 16 kHz mono float that
+// Parakeet requires. Pass the rate the samples were actually captured at, which
+// is not necessarily the rate the engine is running at now.
+- (BOOL)resampleTo16k:(const std::vector<float> &)in
+             fromRate:(double)fromRate
+                  out:(std::vector<float> *)out;
 
 // Bumped on every successful arm. The absolute frame timeline restarts at 0 with
 // each new engine, so a consumer holding frame indices from an earlier generation

@@ -7,12 +7,18 @@
 #include "log.h"
 #include <atomic>
 #include <memory>
+#include <mutex>
 
 // Ring holds ~4 s of mono hardware-rate audio. It does not need to hold a whole
 // dictation: the worker drains during recording into a growing utterance buffer,
 // so the ring only carries slack plus the pre-roll window.
 static constexpr double kRingSeconds = 4.0;
 static constexpr double kMaxHwRate   = 96000.0;
+
+// How long -arm will wait on the queue before giving up on this press. Arming
+// normally takes ~100 ms; anything past a second means the HAL is not answering.
+static constexpr double kArmTimeout      = 2.0;
+static constexpr double kRebuildDebounce = 0.150;
 
 // Real-time-thread state. POD only, reachable by raw pointer so the tap block
 // never retains/releases an ObjC object on the audio thread.
@@ -23,23 +29,47 @@ struct TapCtx {
     std::atomic<uint32_t> overlong{0};     // chunks bigger than scratch (should never happen)
 };
 
-@implementation YapAudio {
-    AVAudioEngine *          _engine;
-    std::shared_ptr<TapCtx>  _ctx;
-    double                   _hwRate;
-    BOOL                     _armed;
-    AVAudioConverter *       _conv;        // hw-rate mono -> 16k mono
-    double                   _convFromRate;
-    id                       _cfgObserver;
-    AudioObjectPropertyListenerBlock _defaultInputListener;
-    dispatch_queue_t         _q;           // serial queue for rebuilds
-    BOOL                     _rebuildPending;
+// Declared up front so -scheduleRebuild and -arm can reach them regardless of
+// definition order, and so the _q-only contract is stated in one place.
+@interface YapAudio ()
+- (BOOL)armOnQueue;          // _q only
+- (void)teardownEngine;      // _q only
+- (BOOL)configurationDidChange;  // _q only
+@end
 
+@implementation YapAudio {
+    // ---- owned by _q; never touched from the main thread ----
+    //
+    // Every CoreAudio call that can stall lives behind this queue. Building an
+    // engine asks the HAL for the hardware format, and that call has no timeout:
+    // with an aggregate device mid-flight -- Siri's voice trigger, a conferencing
+    // app -- it can grind for minutes and never return. On the main thread that
+    // is a frozen menu bar, a dead hotkey and a state machine stuck in Recording.
+    // Here it is only a microphone that has not come back yet.
+    AVAudioEngine *          _engine;
+    id                       _cfgObserver;
     // What the live engine was actually built against, so a configuration-change
     // notification can be checked against reality instead of believed.
     AVAudioChannelCount      _hwChannels;
     AudioDeviceID            _pinnedDevice;
-    uint64_t                 _generation;
+
+    // ---- published to the main thread ----
+    // Atomic so a reader never blocks behind a stalled rebuild.
+    std::atomic<bool>        _armed;
+    std::atomic<double>      _hwRate;
+    std::atomic<uint64_t>    _generation;
+    std::atomic<bool>        _rebuildPending;
+
+    // ---- free-threaded ----
+    std::shared_ptr<TapCtx>  _ctx;          // RT-safe by construction
+    dispatch_queue_t         _q;
+    AudioObjectPropertyListenerBlock _defaultInputListener;
+
+    // The converter is a rate-keyed cache with no tie to the engine's lifetime,
+    // so it outlives teardown and is guarded on its own rather than by _q.
+    std::mutex               _convLock;
+    AVAudioConverter *       _conv;         // hw-rate mono -> 16k mono
+    double                   _convFromRate;
 }
 
 - (instancetype)init {
@@ -47,6 +77,11 @@ struct TapCtx {
     _ctx = std::make_shared<TapCtx>();
     _ctx->scratch.assign(65536, 0.0f);
     _q = dispatch_queue_create("com.samw3.yap.audio", DISPATCH_QUEUE_SERIAL);
+    _armed.store(false, std::memory_order_relaxed);
+    _hwRate.store(0.0, std::memory_order_relaxed);
+    _generation.store(0, std::memory_order_relaxed);
+    _rebuildPending.store(false, std::memory_order_relaxed);
+    _convFromRate = 0;
 
     // "Processes that only ever use the default device are the sort of that
     // should set this property's value to 0" -- AudioHardware.h. Stops the HAL
@@ -164,45 +199,75 @@ struct TapCtx {
         YAP_LOG("input format no longer readable — rebuilding");
         return YES;
     }
-    if (hw.sampleRate != _hwRate || hw.channelCount != _hwChannels) {
+    const double built = _hwRate.load(std::memory_order_relaxed);
+    if (hw.sampleRate != built || hw.channelCount != _hwChannels) {
         YAP_LOG("input format %.0f Hz/%u ch -> %.0f Hz/%u ch — rebuilding",
-                _hwRate, (unsigned) _hwChannels, hw.sampleRate, (unsigned) hw.channelCount);
+                built, (unsigned) _hwChannels, hw.sampleRate, (unsigned) hw.channelCount);
         return YES;
     }
 
     YAP_LOG("configuration change with device and format unchanged (%.0f Hz, %u ch) "
-            "— keeping the engine running", _hwRate, (unsigned) _hwChannels);
+            "— keeping the engine running", built, (unsigned) _hwChannels);
     return NO;
 }
 
+// Callable from anywhere: the default-input listener runs on _q, and the
+// configuration-change observer runs on whichever thread AVFAudio posts from.
 - (void)scheduleRebuild {
     // Debounce: device transitions arrive in bursts (rate, then channel count,
     // then default device). Rebuilding mid-burst races into format mismatches.
-    if (_rebuildPending) return;
-    _rebuildPending = YES;
+    // exchange() rather than test-then-set: the three callers are on three
+    // different threads, and a plain BOOL let two of them through at once.
+    if (_rebuildPending.exchange(true, std::memory_order_acq_rel)) return;
     __weak YapAudio * weakSelf = self;
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(150 * NSEC_PER_MSEC)), _q, ^{
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(kRebuildDebounce * NSEC_PER_SEC)), _q, ^{
         YapAudio * s = weakSelf;
         if (!s) return;
-        dispatch_async(dispatch_get_main_queue(), ^{
-            s->_rebuildPending = NO;
-            if (!s->_armed) return;
-            if (![s configurationDidChange]) return;
-            YAP_LOG("audio configuration changed — rebuilding engine");
-            [s teardownEngine];
-            if (![s arm]) YAP_WARN("rebuild failed; will retry on next arm");
-        });
+        s->_rebuildPending.store(false, std::memory_order_release);
+        if (!s->_armed.load(std::memory_order_acquire)) return;
+        if (![s configurationDidChange]) return;
+        YAP_LOG("audio configuration changed — rebuilding engine");
+        [s teardownEngine];
+        if (![s armOnQueue]) YAP_WARN("rebuild failed; will retry on next arm");
     });
 }
 
-- (BOOL)isArmed { return _armed; }
-- (double)hardwareRate { return _armed ? _hwRate : 0.0; }
+// All lock-free: these are polled from the main thread while a rebuild may be
+// stalled inside CoreAudio, and must never wait on it.
+- (BOOL)isArmed { return _armed.load(std::memory_order_acquire) ? YES : NO; }
+- (double)hardwareRate {
+    return _armed.load(std::memory_order_acquire) ? _hwRate.load(std::memory_order_relaxed) : 0.0;
+}
 - (uint64_t)framesWritten { return _ctx->ring.written(); }
 - (BOOL)hasRealSignal { return _ctx->saw_signal.load(std::memory_order_relaxed); }
-- (uint64_t)generation { return _generation; }
+- (uint64_t)generation { return _generation.load(std::memory_order_relaxed); }
 
+// Main-thread entry point. The work happens on _q; this only waits for it.
 - (BOOL)arm {
-    if (_armed) return YES;
+    if (_armed.load(std::memory_order_acquire)) return YES;
+
+    __block BOOL ok = NO;
+    dispatch_semaphore_t done = dispatch_semaphore_create(0);
+    dispatch_async(_q, ^{
+        ok = [self armOnQueue];
+        dispatch_semaphore_signal(done);
+    });
+
+    // Bounded on purpose. -armOnQueue can stall indefinitely inside the HAL, and
+    // when it does the right answer is "not armed for this press" -- not taking
+    // the whole app down with it. The block keeps running; if it eventually
+    // succeeds the next press finds _armed already true.
+    if (dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW,
+                                (int64_t)(kArmTimeout * NSEC_PER_SEC))) != 0) {
+        YAP_WARN("arm still running after %.1f s — the audio HAL is not answering; "
+                 "leaving it to finish in the background", kArmTimeout);
+        return NO;
+    }
+    return ok;
+}
+
+- (BOOL)armOnQueue {
+    if (_armed.load(std::memory_order_acquire)) return YES;
 
     // A fresh engine every time. Reusing one after a configuration change makes
     // it report a stale format, which walks straight into the 0 Hz tap crash.
@@ -228,7 +293,7 @@ struct TapCtx {
         return NO;
     }
 
-    _hwRate = hw.sampleRate;
+    _hwRate.store(hw.sampleRate, std::memory_order_relaxed);
     _ctx->ring.reset();
     _ctx->saw_signal.store(false, std::memory_order_relaxed);
 
@@ -299,12 +364,14 @@ struct TapCtx {
         return NO;
     }
 
-    _armed = YES;
     _hwChannels = nch;
-    ++_generation;
+    const uint64_t gen = _generation.fetch_add(1, std::memory_order_relaxed) + 1;
     [self observeConfigurationChangesFor:_engine];
+    // Published last: _armed is what lets the main thread start reading frames,
+    // so everything it will read has to be in place first.
+    _armed.store(true, std::memory_order_release);
     YAP_LOG("audio armed: %.0f Hz, %u ch, ring %.1f s (generation %llu)",
-            _hwRate, (unsigned) nch, kRingSeconds, (unsigned long long) _generation);
+            hw.sampleRate, (unsigned) nch, kRingSeconds, (unsigned long long) gen);
     return YES;
 }
 
@@ -349,29 +416,42 @@ struct TapCtx {
     else            YAP_LOG("pinned input device %u (was %u)", (unsigned) dev, (unsigned) cur);
 }
 
+// _q only. Note it does NOT touch the converter: that is a rate-keyed cache
+// which rebuilds itself whenever the rate moves, and dropping it here would mean
+// reaching across threads to do it.
 - (void)teardownEngine {
-    // Observer first: a dying engine keeps posting configuration changes, and
+    // Unpublish first. A consumer that reads frames from a torn-down engine gets
+    // a stale timeline, which is worse than getting nothing.
+    _armed.store(false, std::memory_order_release);
+
+    // Observer next: a dying engine keeps posting configuration changes, and
     // acting on one would rebuild whatever replaced it.
     if (_cfgObserver) {
         [[NSNotificationCenter defaultCenter] removeObserver:_cfgObserver];
         _cfgObserver = nil;
     }
     _pinnedDevice = kAudioObjectUnknown;
-    if (!_engine) { _armed = NO; return; }
+    if (!_engine) return;
     @try { [_engine.inputNode removeTapOnBus:0]; } @catch (NSException * _) {}
     if (_engine.isRunning) [_engine stop];
     _engine = nil;
-    _armed = NO;
-    _conv = nil;
-    _convFromRate = 0;
 }
 
 - (void)disarm {
-    if (!_armed && !_engine) return;
+    // Unpublish synchronously so the caller's very next -isArmed is correct and
+    // the privacy indicator stops tracking us; the teardown itself is CoreAudio
+    // work and belongs on _q with everything else that can stall.
+    if (!_armed.exchange(false, std::memory_order_acq_rel)) {
+        // Not armed, but an engine may still be half-built on _q -- fall through
+        // so the teardown runs either way.
+    }
     const uint32_t overlong = _ctx->overlong.load(std::memory_order_relaxed);
     if (overlong) YAP_WARN("%u oversized tap buffers were dropped", overlong);
-    [self teardownEngine];
-    YAP_LOG("audio disarmed");
+    dispatch_async(_q, ^{
+        if (!self->_engine) return;
+        [self teardownEngine];
+        YAP_LOG("audio disarmed");
+    });
 }
 
 - (BOOL)copyRangeFrom:(uint64_t)fromFrame to:(uint64_t)toFrame into:(std::vector<float> *)out
@@ -386,10 +466,17 @@ struct TapCtx {
     return YES;
 }
 
-- (BOOL)resampleTo16k:(const std::vector<float> &)in out:(std::vector<float> *)out {
+- (BOOL)resampleTo16k:(const std::vector<float> &)in
+             fromRate:(double)fromRate
+                  out:(std::vector<float> *)out {
     if (in.empty()) { out->clear(); return YES; }
-    const double from = _hwRate > 0 ? _hwRate : 48000.0;
+    // The rate comes from the caller, not from _hwRate: the utterance must be
+    // resampled at the rate it was captured at, and a rebuild on _q can move
+    // _hwRate out from under a transcription that is already in flight.
+    const double from = fromRate > 0 ? fromRate : 48000.0;
     if (from == 16000.0) { *out = in; return YES; }
+
+    std::lock_guard<std::mutex> guard(_convLock);
 
     AVAudioFormat * inFmt = [[AVAudioFormat alloc] initWithCommonFormat:AVAudioPCMFormatFloat32
                                                             sampleRate:from channels:1 interleaved:NO];

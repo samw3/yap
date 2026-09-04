@@ -366,7 +366,7 @@ static bool screen_is_usable() {
     [self setState:yap::State::Transcribing];
 
     std::vector<float> pcm16k;
-    if (![_audio resampleTo16k:_utterance out:&pcm16k]) {
+    if (![_audio resampleTo16k:_utterance fromRate:_utteranceRate out:&pcm16k]) {
         YAP_WARN("resample failed — dropping utterance");
         [self armedIdleAndSchedule];
         return;
